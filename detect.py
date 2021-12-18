@@ -61,6 +61,7 @@ def run(weights=ROOT / 'yolov5s.pt',  # model.pt path(s)
         hide_conf=False,  # hide confidences
         half=False,  # use FP16 half-precision inference
         dnn=False,  # use OpenCV DNN for ONNX inference
+        batchSize=1,
         ):
     source = str(source)
     save_img = not nosave and not source.endswith('.txt')  # save inference images
@@ -99,6 +100,8 @@ def run(weights=ROOT / 'yolov5s.pt',  # model.pt path(s)
     # Run inference
     model.warmup(imgsz=(1, 3, *imgsz), half=half)  # warmup
     dt, seen = [0.0, 0.0, 0.0], 0
+    img_count = 0
+    batchImg = []
     for path, im, im0s, vid_cap, s in dataset:
         t1 = time_sync()
         im = torch.from_numpy(im).to(device)
@@ -107,11 +110,17 @@ def run(weights=ROOT / 'yolov5s.pt',  # model.pt path(s)
         if len(im.shape) == 3:
             im = im[None]  # expand for batch dim
         t2 = time_sync()
+        batchImg.append(im)
         dt[0] += t2 - t1
+        if img_count % batchSize != 0:
+            continue
+        else:
+            images = torch.vstack(batchImg)
+            batchImg.clear()
 
         # Inference
-        visualize = increment_path(save_dir / Path(path).stem, mkdir=True) if visualize else False
-        pred = model(im, augment=augment, visualize=visualize)
+        # visualize = increment_path(save_dir / Path(path).stem, mkdir=True) if visualize else False
+        pred = model(images, augment=augment, visualize=visualize)
         t3 = time_sync()
         dt[1] += t3 - t2
 
@@ -227,6 +236,7 @@ def parse_opt():
     parser.add_argument('--hide-conf', default=False, action='store_true', help='hide confidences')
     parser.add_argument('--half', action='store_true', help='use FP16 half-precision inference')
     parser.add_argument('--dnn', action='store_true', help='use OpenCV DNN for ONNX inference')
+    parser.add_argument('--batchSize', type=int, default=1, help='the number of images processed each time')
     opt = parser.parse_args()
     opt.imgsz *= 2 if len(opt.imgsz) == 1 else 1  # expand
     print_args(FILE.stem, opt)
