@@ -35,53 +35,50 @@ from utils.general import (LOGGER, check_file, check_img_size, check_imshow, che
 from utils.plots import Annotator, colors, save_one_box
 from utils.torch_utils import select_device, time_sync
 
-def copy_image_to_gpu(cond: threading.Condition(), dataset, device, half: bool, memory_pool: list, batchSize=5):
+def copy_image_to_gpu(semBuf, semCond, semN, dataset, device, half: bool, memory_pool: list, batchSize=5):
     print("image transferring !!!")
     for path, im, im0s, vid_cap, s in dataset:
-        if (len(memory_pool) >= batchSize * 3):
-            cond.acquire()
-            cond.wait()
-            cond.release()
-        if (len(memory_pool) >= batchSize):
-            cond.acquire()
-            cond.notify()
-            cond.release()
         im = torch.from_numpy(im).to(device)
         im = im.half() if half else im.float()  # uint8 to fp16/32
         im /= 255  # 0 - 255 to 0.0 - 1.0
         if len(im.shape) == 3:
             im = im[None]  # expand for batch dim
+        
+        semBuf.acquire()   # monitor buffer zone 
+        semCond.acquire()
         memory_pool.append(im)
-    
-    cond.acquire()
-    cond.notify()
-    cond.release()
+        semCond.release()
+        if len(memory_pool) >= batchSize:
+            print("To free consumer")
+            semN.release()
+    semN.release()
 
-def execution(cond: threading.Condition(), model, memory_pool, augment: bool, batchSize=5, visualize=False):
+def execution(semBuf, semCond, semN, model, memory_pool, augment: bool, batchSize=5, visualize=False):
     img_count = 0
     while (True):
-        if (len(memory_pool) < batchSize):
-            cond.acquire()
+        if len(memory_pool) < batchSize:
             print("waiting for batch ready")
-            cond.wait()
-            cond.release()
+            semN.acquire()
+         
+        # take element from buffer zone
+        semCond.acquire()
+        if len(memory_pool) == 0:
+            print("exit ....")
+            return  
 
         images = list(memory_pool[x] for x in range(batchSize if batchSize < len(memory_pool) else len(memory_pool)))
+        print("** taking element from buf zone ** ", len(images))
+        img_count += len(images)
+        for i in range(batchSize if batchSize < len(memory_pool) else len(memory_pool)):
+            del memory_pool[0]
+            semBuf.release()
+        semCond.release()
         images = torch.vstack(images)
 
         # begin inference
         pred = model(images, augment, visualize)
-        img_count += batchSize if batchSize < len(memory_pool) else len(memory_pool)
         print("=== %d images have been processed ===" % img_count)
-        for i in range(batchSize if batchSize < len(memory_pool) else len(memory_pool)):
-            del memory_pool[0]
 
-        if (len(memory_pool) == 0):
-            return
-
-        cond.acquire()
-        cond.notify()
-        cond.release()
 
 @torch.no_grad()
 def run(weights=ROOT / 'yolov5s.pt',  # model.pt path(s)
@@ -148,10 +145,12 @@ def run(weights=ROOT / 'yolov5s.pt',  # model.pt path(s)
     model.warmup(imgsz=(1, 3, *imgsz), half=half)  # warmup
 
     t1 = time_sync()
-    cond = threading.Condition()
+    semBuf = threading.Semaphore(10)
+    semCond = threading.Semaphore(1)
+    semN = threading.Semaphore(0)
     mock_mem = []
-    thread1 = threading.Thread(target=copy_image_to_gpu, args=(cond, dataset, device, half, mock_mem))
-    thread2 = threading.Thread(target=execution, args=(cond, model, mock_mem, augment))
+    thread2 = threading.Thread(target=copy_image_to_gpu, args=(semBuf, semCond, semN, dataset, device, half, mock_mem))
+    thread1 = threading.Thread(target=execution, args=(semBuf, semCond, semN, model, mock_mem, augment))
    
     thread1.start()
     thread2.start()
