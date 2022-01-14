@@ -51,16 +51,20 @@ from utils.plots import Annotator, colors, save_one_box
 from utils.torch_utils import select_device, time_sync
 
 class Detect:
-    def __init__(self, img):
-        self.img = img
-        self.model = ''
-        self.device = ''
-        self.imgsz = 640
+    def __init__(self, **kwargs):
+        # self.img = img
+        self.model=kwargs.get('weights', 'yolov5s.pt')
+        self.device=kwargs.get('device', None)
+        self.imgsz=kwargs.get('imgsz', 640)
+        self.dnn=kwargs.get('dnn', False)
+        self.half=kwargs.get('half', False)
+        self.augment=kwargs.get('augment', False)
+        self.visualize=kwargs.get('visualize', False)
 
-    def convertImage(self, stride=32, auto=True):
-        img0 = cv2.imread(self.img)
-        assert img0 is not None, f'Image Not Found'
-        img = letterbox(img0, stride, auto)[0]
+    def convertImage(self, image:cv2.imread, stride=32, auto=True):
+        # img0 = cv2.imread(self.img) 
+        assert image is not None, f'Image Not Found'
+        img = letterbox(image, stride, auto)[0]
         
         img = img.transpose((2, 0, 1))[::-1] # HWC to CHW, BGR to RGB
         img = np.ascontiguousarray(img)
@@ -68,26 +72,26 @@ class Detect:
         return img
 
     @torch.no_grad()
-    def run(self, **kwargs):
+    def run(self, image):
     
         # Load model
-        self.device = select_device(kwargs['device'])
-        self.model = DetectMultiBackend(kwargs['weights'], device=self.device, dnn=kwargs['dnn'])
+        self.device = select_device(self.device)
+        self.model = DetectMultiBackend(self.model, device=self.device, dnn=self.dnn)
         stride, pt, jit, onnx, engine = self.model.stride, self.model.pt, self.model.jit, self.model.onnx, self.model.engine
-        self.imgsz = check_img_size(kwargs['imgsz'], s=stride)  # check image size
+        self.imgsz = check_img_size(self.imgsz, s=stride)  # check image size
 
         # Half
-        half = kwargs['half'] & (pt or jit or onnx or engine) and self.device.type != 'cpu'  # FP16 supported on limited backends with CUDA
+        half = self.half & (pt or jit or onnx or engine) and self.device.type != 'cpu'  # FP16 supported on limited backends with CUDA
         if pt or jit:
             self.model.model.half() if half else self.model.model.float()
 
-        self.img = self.convertImage(stride=stride, auto=pt)
+        img = self.convertImage(image, stride=stride, auto=pt)
 
         # Run inference
         dt = []
         self.model.warmup(imgsz=(1, 3, *self.imgsz), half=half)  # warmup
         t1 = time_sync()
-        im = torch.from_numpy(self.img).to(self.device)
+        im = torch.from_numpy(img).to(self.device)
         im = im.half() if half else im.float()  # uint8 to fp16/32
         im /= 255  # 0 - 255 to 0.0 - 1.0
         if len(im.shape) == 3:
@@ -97,7 +101,7 @@ class Detect:
         dt.append(t2 - t1)
 
         # Inference
-        self.model(im, augment=kwargs['augment'], visualize=kwargs['visualize'])
+        self.model(im, augment=self.augment, visualize=self.visualize)
         t3 = time_sync()
         dt.append(t3 - t2)
 
@@ -142,11 +146,11 @@ def parse_opt():
 
 def main(opt):
     check_requirements(exclude=('tensorboard', 'thop'))
-    # get input image
-    input = ''
 
-    detect = Detect(input)
-    detect.run(**vars(opt))
+    # get input image
+    image = input()
+    detect = Detect(**kwargs)
+    detect.run(image)
 
 
 if __name__ == "__main__":
