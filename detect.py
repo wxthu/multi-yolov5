@@ -94,7 +94,7 @@ class Detect:
 
         # Run inference
         dt = []
-        self.model.warmup(imgsz=(1, 3, *self.imgsz), half=half)  # warmup
+        # self.model.warmup(imgsz=(1, 3, *self.imgsz), half=half)  # warmup
         t1 = time_sync()
         im = torch.from_numpy(img).to(self.device)
         im = im.half() if half else im.float()  # uint8 to fp16/32

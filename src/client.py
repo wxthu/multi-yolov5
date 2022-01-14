@@ -58,6 +58,7 @@ class Clients:
             time.sleep(self.freq)
             # TODO 从server收到的结果
             # res_data = self.recv_np_array(socket_handler)
+            # socket_handler.recv(self.buff_size)
 
 <<<<<<< HEAD
             print('client', client_id, '收到的数据', res_data, '\n')
