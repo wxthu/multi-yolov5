@@ -3,11 +3,14 @@ import socket
 import sys
 from _thread import *
 import numpy as np
+import struct
 
 from detect import Detect
 
+payload_size = struct.calcsize(">L")
+
 class Server:
-    def __init__(self, client_num=8, host='localhost', port=35491, buff_size=4096):
+    def __init__(self, detect, client_num=8, host='localhost', port=35490, buff_size=4096):
         self.host = host
         self.client_num = client_num
         self.port = port
@@ -21,26 +24,36 @@ class Server:
 
     def process_np_array(self, inference:Detect, data:cv2.imread):
         # TODO 在这里添加处理数据逻辑
-        # 例如 result = data+1
-        inference.run(data)
-        return data
+        res = self.detect.run(data)
+        print('inference over', type(data), data.shape)
+        print()
+        return res
 
     def start_new_thread(self, connection):
+        data = b""
         while True:
-            data = b''
-            data += connection.recv(self.buff_size)
+            while len(data) < payload_size:
+                # print("Recv: {}".format(len(data)))
+                data += connection.recv(self.buff_size)
 
-            if not data:
-                break
+            # print("Done Recv: {}".format(len(data)))
+            packed_msg_size = data[:payload_size]
+            data = data[payload_size:]
+            msg_size = struct.unpack(">L", packed_msg_size)[0]
+            # print("msg_size: {}".format(msg_size))
+            while len(data) < msg_size:
+                data += connection.recv(self.buff_size)
+            frame_data = data[:msg_size]
+            data = data[msg_size:]
 
             # 解码客户端传来的数据，数据为numpy数组
-            if sys.version_info.major < 3:
-                decoded_data = pickle.loads(data)
-            else:
-                decoded_data = pickle.loads(data, encoding='bytes')
-
-            result = self.process_np_array(decoded_data)
-            connection.sendall(pickle.dumps(result, protocol=2))
+            # if sys.version_info.major < 3:
+            #     decoded_data = pickle.loads(data)
+            # else:
+            #     decoded_data = pickle.loads(data, encoding='bytes')
+            frame = pickle.loads(frame_data, fix_imports=True, encoding="bytes")
+            result = self.process_np_array(frame)
+            # connection.sendall(pickle.dumps(result, protocol=2))
         print('end thread connection')
         connection.close()
 

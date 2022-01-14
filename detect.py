@@ -61,8 +61,16 @@ class Detect:
         self.augment=kwargs.get('augment', False)
         self.visualize=kwargs.get('visualize', False)
 
-    def convertImage(self, image:cv2.imread, stride=32, auto=True):
-        # img0 = cv2.imread(self.img) 
+                # Load model
+        self.device = select_device(self.device)
+        self.model = DetectMultiBackend(self.model, device=self.device, dnn=self.dnn)
+
+        self.model.eval()
+
+    def convertImage(self, image, stride=32, auto=True):
+        img0 = cv2.imread('src/in3.jpeg') 
+        image = img0
+
         assert image is not None, f'Image Not Found'
         img = letterbox(image, stride, auto)[0]
         
@@ -73,10 +81,7 @@ class Detect:
 
     @torch.no_grad()
     def run(self, image):
-    
-        # Load model
-        self.device = select_device(self.device)
-        self.model = DetectMultiBackend(self.model, device=self.device, dnn=self.dnn)
+
         stride, pt, jit, onnx, engine = self.model.stride, self.model.pt, self.model.jit, self.model.onnx, self.model.engine
         self.imgsz = check_img_size(self.imgsz, s=stride)  # check image size
 
@@ -147,10 +152,13 @@ def parse_opt():
 def main(opt):
     check_requirements(exclude=('tensorboard', 'thop'))
 
-    # get input image
-    image = input()
-    detect = Detect(**kwargs)
-    detect.run(image)
+    detect = Detect(**vars(opt))
+    s = Server(detect)
+    s.run()
+    s.end()
+
+    # detect = Detect(**vars(opt))
+    # detect.run(1)
 
 
 if __name__ == "__main__":
