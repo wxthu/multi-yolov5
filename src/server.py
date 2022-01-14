@@ -4,6 +4,7 @@ import sys
 from _thread import *
 import numpy as np
 
+from detect import Detect
 
 class Server:
     def __init__(self, client_num=8, host='localhost', port=35491, buff_size=4096):
@@ -18,9 +19,10 @@ class Server:
 
         self.ThreadCount = 0
 
-    def process_np_array(self, data:np.ndarray):
+    def process_np_array(self, inference:Detect, data:cv2.imread):
         # TODO 在这里添加处理数据逻辑
         # 例如 result = data+1
+        inference.run(data)
         return data
 
     def start_new_thread(self, connection):
