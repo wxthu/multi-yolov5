@@ -1,42 +1,60 @@
+import pickle
 import socket
-import os
+import sys
 from _thread import *
-
-client_num = 8
-
-ServerSocket = socket.socket()
-host = '127.0.0.1'
-port = 35491
-ThreadCount = 0
-try:
-    ServerSocket.bind((host, port))
-except socket.error as e:
-    print(str(e))
-
-print('Server start!')
-ServerSocket.listen(client_num)
+import numpy as np
 
 
-def threaded_client(connection):
-    connection.send(str.encode('Welcome to the Server\n'))
-    while True:
-        data = connection.recv(2048)
-        # TODO 拿到client的数据，做后续处理
-        reply = 'Server Says: ' + data.decode('utf-8')
-        print('got ',  data, ' from', connection)
+class Server:
+    def __init__(self, client_num=8, host='localhost', port=35491, buff_size=4096):
+        self.host = host
+        self.client_num = client_num
+        self.port = port
+        self.buff_size = buff_size
 
-        # TODO 返回处理完的结果
-        connection.sendall(str.encode(reply))
+        self.server_handler = socket.socket()
+        self.server_handler.bind((host, port))
+        self.server_handler.listen(client_num)
 
-        if not data:
-            break
+        self.ThreadCount = 0
 
-    connection.close()
+    def process_np_array(self, data:np.ndarray):
+        # TODO 在这里添加处理数据逻辑
+        # 例如 result = data+1
+        return data
 
-while True:
-    Client, address = ServerSocket.accept()
-    print('Connected to: ' + address[0] + ':' + str(address[1]))
-    start_new_thread(threaded_client, (Client, ))
-    ThreadCount += 1
-    print('Thread Number: ' + str(ThreadCount))
-ServerSocket.close()
+    def start_new_thread(self, connection):
+        while True:
+            data = b''
+            data += connection.recv(self.buff_size)
+
+            if not data:
+                break
+
+            # 解码客户端传来的数据，数据为numpy数组
+            if sys.version_info.major < 3:
+                decoded_data = pickle.loads(data)
+            else:
+                decoded_data = pickle.loads(data, encoding='bytes')
+
+            result = self.process_np_array(decoded_data)
+            connection.sendall(pickle.dumps(result, protocol=2))
+        print('end thread connection')
+        connection.close()
+
+    def run(self):
+        while True:
+            client, addr = self.server_handler.accept()
+            print('Connected to: ' + addr[0] + ':' + str(addr[1]))
+
+            start_new_thread(self.start_new_thread, (client,))
+            self.ThreadCount += 1
+            print('Thread Number: ' + str(self.ThreadCount))
+
+    def end(self):
+        self.server_handler.close()
+
+
+s = Server()
+s.run()
+s.end()
