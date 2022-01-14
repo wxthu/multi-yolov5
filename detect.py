@@ -36,6 +36,7 @@ import cv2
 import torch
 import torch.backends.cudnn as cudnn
 from utils.augmentations import letterbox
+from src.server import *
 
 FILE = Path(__file__).resolve()
 ROOT = FILE.parents[0]  # YOLOv5 root directory
@@ -156,10 +157,7 @@ def main(opt):
     s = Server(detect)
     s.run()
     s.end()
-
-    # detect = Detect(**vars(opt))
-    # detect.run(1)
-
+    
 
 if __name__ == "__main__":
     opt = parse_opt()
