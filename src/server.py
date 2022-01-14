@@ -16,6 +16,7 @@ class Server:
         self.client_num = client_num
         self.port = port
         self.buff_size = buff_size
+        self.detect = detect
 
         self.server_handler = socket.socket()
         self.server_handler.bind((host, port))
@@ -23,7 +24,7 @@ class Server:
 
         self.ThreadCount = 0
 
-    def process_np_array(self, inference:Detect, data:cv2.imread):
+    def process_np_array(self, data):
         # TODO 在这里添加处理数据逻辑
         res = self.detect.run(data)
         print('inference over', type(data), data.shape)
@@ -74,7 +75,3 @@ class Server:
     def end(self):
         self.server_handler.close()
 
-
-s = Server()
-s.run()
-s.end()
