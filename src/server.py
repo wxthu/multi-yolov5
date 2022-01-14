@@ -2,6 +2,8 @@ import socket
 import os
 from _thread import *
 
+client_num = 8
+
 ServerSocket = socket.socket()
 host = '127.0.0.1'
 port = 35491
@@ -12,22 +14,23 @@ except socket.error as e:
     print(str(e))
 
 print('Server start!')
-ServerSocket.listen(5)
+ServerSocket.listen(client_num)
 
 
 def threaded_client(connection):
     connection.send(str.encode('Welcome to the Server\n'))
     while True:
         data = connection.recv(2048)
-        # TODO 拿到client的数据，做后续处理即可
+        # TODO 拿到client的数据，做后续处理
         reply = 'Server Says: ' + data.decode('utf-8')
         print('got ',  data, ' from', connection)
-        
-        if not data:
-            break
-        
+
         # TODO 返回处理完的结果
         connection.sendall(str.encode(reply))
+
+        if not data:
+            break
+
     connection.close()
 
 while True:
