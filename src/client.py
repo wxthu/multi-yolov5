@@ -52,25 +52,17 @@ class Clients:
         while True:
 
             # TODO 要发给server的数据data
-            data = np.ones((client_id + 1,))*client_id
-            self.send_np_array(socket_handler, data)
+            self.send_np_array(socket_handler)
 
             time.sleep(self.freq)
             # TODO 从server收到的结果
             # res_data = self.recv_np_array(socket_handler)
             # socket_handler.recv(self.buff_size)
 
-<<<<<<< HEAD
-            print('client', client_id, '收到的数据', res_data, '\n')
-            if type(res_data) is not np.ndarray:
-                print("Connection closed")
-                break
-=======
             # print('client', client_id, '收到数据', res_data, '\n')
             # if type(res_data) is not np.ndarray:
             #     print("Connection closed")
             #     break
->>>>>>> ea0f9af... 调通了client, server和detect
         socket_handler.close()
 
 
