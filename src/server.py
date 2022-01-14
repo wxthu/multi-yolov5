@@ -4,13 +4,14 @@ import sys
 from _thread import *
 import numpy as np
 import struct
+import time
 
 from detect import Detect
 
 payload_size = struct.calcsize(">L")
 
 class Server:
-    def __init__(self, detect, client_num=8, host='localhost', port=35490, buff_size=4096):
+    def __init__(self, detect, client_num=1, host='localhost', port=35490, buff_size=4096):
         self.host = host
         self.client_num = client_num
         self.port = port
@@ -26,7 +27,6 @@ class Server:
         # TODO 在这里添加处理数据逻辑
         res = self.detect.run(data)
         print('inference over', type(data), data.shape)
-        print()
         return res
 
     def start_new_thread(self, connection):
@@ -52,8 +52,13 @@ class Server:
             # else:
             #     decoded_data = pickle.loads(data, encoding='bytes')
             frame = pickle.loads(frame_data, fix_imports=True, encoding="bytes")
+
+            t1 = time.time()
             result = self.process_np_array(frame)
-            # connection.sendall(pickle.dumps(result, protocol=2))
+            t2 = time.time()
+            print('在外面的model inference 时间{:.3f}'.format(t2-t1))
+            print()
+            # connection.sendall(pickle.dumps('finished'))
         print('end thread connection')
         connection.close()
 
