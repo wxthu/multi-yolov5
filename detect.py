@@ -37,7 +37,7 @@ import numpy as np
 import cv2
 import torch
 import torch.backends.cudnn as cudnn
-from utils.augmentations import letterbox
+from utils.augmentations import letterbox, batch_letterbox
 from src.server import *
 
 FILE = Path(__file__).resolve()
@@ -72,15 +72,14 @@ class Detect:
         self.model.eval()
 
     def convertImage(self, image, stride=32, auto=True):
-        # img0 = cv2.imread('src/in3.jpeg') 
-        # image = img0
-
+       
         assert image is not None, f'Image Not Found'
         stride = 640
         # auto = False
-        img = letterbox(image, stride, auto)[0]
-        
-        img = img.transpose((2, 0, 1))[::-1] # HWC to CHW, BGR to RGB
+        # img = batch_letterbox(image, stride, auto)[0]
+        # img = img.transpose((2, 0, 1))[::-1] # HWC to CHW, BGR to RGB
+        img = batch_letterbox(image, stride, auto)
+        img = img.transpose((0, 3, 1, 2))[::-1] # HWC to CHW, BGR to RGB
         img = np.ascontiguousarray(img)
 
         return img
@@ -90,7 +89,6 @@ class Detect:
 
         stride, pt, jit, onnx, engine = self.model.stride, self.model.pt, self.model.jit, self.model.onnx, self.model.engine
         self.imgsz = check_img_size(self.imgsz, s=stride)  # check image size
-
         # Half
         half = self.half & (pt or jit or onnx or engine) and self.device.type != 'cpu'  # FP16 supported on limited backends with CUDA
         if pt or jit:
@@ -167,16 +165,22 @@ from multiprocessing import Process,Queue
 import time,random,os
 def consumer(q, detect, client_num, image_num, batchsize):
     t1 = time_sync()
+    count = 0
     frames = []
-    for i in range(client_num * image_num):
-        for k in range(batchsize):
+    for _ in range(client_num * image_num):
+        if count < batchsize:
             frame = q.get()
             if frame is None:
+                frames = np.stack(frames)
+                detect.run(frames)
                 break
-
             frames.append(frame)
-        frames = np.stack(frames)
-        detect.run(frames)
+            count += 1
+        else:
+            count = 0
+            frames = np.stack(frames)
+            detect.run(frames)
+            frames = []
 
     t2 = time_sync()
     durarion = t2 - t1
