@@ -25,9 +25,11 @@ Usage - formats:
 """
 
 import argparse
+import multiprocessing
 import os
 import sys
 from pathlib import Path
+from unittest import defaultTestLoader
 
 from PIL.Image import Image
 import numpy as np
@@ -61,8 +63,9 @@ class Detect:
         self.half=kwargs.get('half', False)
         self.augment=kwargs.get('augment', False)
         self.visualize=kwargs.get('visualize', False)
+        self.batchsize=kwargs.get('bs', 1)
 
-                # Load model
+        # Load model
         self.device = select_device(self.device)
         self.model = DetectMultiBackend(self.model, device=self.device, dnn=self.dnn)
 
@@ -105,8 +108,7 @@ class Detect:
         if len(im.shape) == 3:
             im = im[None]  # expand for batch dim
 
-        batch_image = 50
-        im = im.repeat(batch_image, 1, 1, 1)
+        im = im.repeat(self.batchsize, 1, 1, 1)
         print('data shape is ',im.shape)
         
         t2 = time_sync()
@@ -151,6 +153,10 @@ def parse_opt():
     parser.add_argument('--hide-conf', default=False, action='store_true', help='hide confidences')
     parser.add_argument('--half', action='store_true', help='use FP16 half-precision inference')
     parser.add_argument('--dnn', action='store_true', help='use OpenCV DNN for ONNX inference')
+    parser.add_argument('--bs', type=int, default=1, help='batch size of img')
+    parser.add_argument('--img_num', type=int, default=25, help='the number of img sent by each client')
+    parser.add_argument('--client_num', type=int, default=4, help='the number of video stream')
+    parser.add_argument('--server_num', type=int, default=1, help='the number of detector')
     opt = parser.parse_args()
     opt.imgsz *= 2 if len(opt.imgsz) == 1 else 1  # expand
     print_args(vars(opt))
@@ -160,9 +166,9 @@ def parse_opt():
 
 from multiprocessing import Process,Queue
 import time,random,os
-def consumer(q, detect, client_num):
+def consumer(q, detect, client_num, image_num, batchsize):
     t1 = time_sync()
-    for i in range(20):
+    for i in range(client_num * image_num):
         frame=q.get() 
 
         if frame is None:
@@ -171,14 +177,16 @@ def consumer(q, detect, client_num):
         detect.run(frame)
 
     t2 = time_sync()
-    print('server端总时长{:.3f}s'.format(t2-t1))
+    durarion = t2 - t1
+    print('server端总时长{:.3f}s'.format(durarion))
+    print('平均每张图片处理时长 {:.3f}ms'.format(durarion * 1000 / (client_num * image_num * batchsize)))
 
 # 进程最小函数
-def producer(name,q):
-    发送图片间隔 = 1.0/3.0
+def producer(name, q, amount):
+    freq = 1.0/3.0
     t = time.time()
-    for i in range(5):
-        time.sleep(发送图片间隔)
+    for i in range(amount):
+        time.sleep(freq)
 
         image = cv2.imread('src/in3.jpeg')
         image = cv2.resize(image, (1920, 1080), interpolation=cv2.INTER_AREA)
@@ -191,31 +199,46 @@ def producer(name,q):
 
 def main(opt):
     check_requirements(exclude=('tensorboard', 'thop'))
+    multiprocessing.set_start_method('spawn')
     
     # 创建推理模型
-    detect = Detect(**vars(opt))
+    args_dict = vars(opt)
+    detect = Detect(**args_dict)
 
     # 推理图片队列
     image_queue = Queue()
     
     clients = []
-    client_num = 4
+    servers = []
+    client_num = args_dict['client_num']
+    server_num = args_dict['server_num']
+    image_num = args_dict['img_num']
+    batchsize = args_dict['bs']
     # 创建client进程
     for i in range(client_num):
         clients.append(
-            Process(target=producer,args=('client'+str(i), image_queue))
+            Process(target=producer,args=('client'+str(i), image_queue, image_num))
         )
 
     # 启动client进程
     for client in clients:
         client.start()
 
-    # 启动server（本进程即为server进程）
-    consumer(image_queue, detect, client_num)
+    # 创建和启动server进程
+    for j in range(server_num):
+        servers.append(
+            Process(target=consumer, args=(image_queue, detect, client_num, image_num, batchsize))
+        )
+
+    for server in servers:
+        server.start()
 
     # join client进程
     for client in clients:
         client.join()
+
+    for server in servers:
+        server.join()
 
 if __name__ == "__main__":
     opt = parse_opt()
