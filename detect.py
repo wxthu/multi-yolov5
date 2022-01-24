@@ -168,8 +168,8 @@ def consumer(q, detect, client_num, image_num, batchsize):
     count = 0
     frames = []
     for _ in range(client_num * image_num):
+        frame = q.get()
         if count < batchsize:
-            frame = q.get()
             if frame is None:
                 frames = np.stack(frames)
                 detect.run(frames)
@@ -177,15 +177,17 @@ def consumer(q, detect, client_num, image_num, batchsize):
             frames.append(frame)
             count += 1
         else:
-            count = 0
+            count = 1
             frames = np.stack(frames)
             detect.run(frames)
             frames = []
+            frames.append(frame)
 
     t2 = time_sync()
     durarion = t2 - t1
     print('server端总时长{:.3f}s'.format(durarion))
     print('平均每张图片处理时长 {:.3f}ms'.format(durarion * 1000 / (client_num * image_num)))
+    print('remainig imgs : {}'.format(q.qsize()))
 
 # 进程最小函数
 def producer(name, q, amount):
