@@ -123,7 +123,6 @@ def letterbox(im, new_shape=(640, 640), color=(114, 114, 114), auto=True, scaleF
 
 def batch_letterbox(images, new_shape=(640, 640), color=(114, 114, 114), auto=True, scaleFill=False, scaleup=True, stride=32):
     tailored_imgs = []
-    print('====================== lx : {}'.format(images.shape))
     for e in range(images.shape[0]):
         im = images[e]
         shape = im.shape[:2]  # current shape [height, width]
