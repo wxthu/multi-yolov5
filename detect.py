@@ -63,7 +63,7 @@ class Detect:
         self.half=kwargs.get('half', False)
         self.augment=kwargs.get('augment', False)
         self.visualize=kwargs.get('visualize', False)
-        self.batchsize=kwargs.get('bs', 1)
+        # self.batchsize=kwargs.get('bs', 1)
 
         # Load model
         self.device = select_device(self.device)
@@ -100,7 +100,6 @@ class Detect:
 
         # Run inference
         dt = []
-        # self.model.warmup(imgsz=(1, 3, *self.imgsz), half=half)  # warmup
         t1 = time_sync()
         im = torch.from_numpy(img).to(self.device)
         im = im.half() if half else im.float()  # uint8 to fp16/32
@@ -108,7 +107,7 @@ class Detect:
         if len(im.shape) == 3:
             im = im[None]  # expand for batch dim
 
-        im = im.repeat(self.batchsize, 1, 1, 1)
+        # im = im.repeat(self.batchsize, 1, 1, 1)
         print('data shape is ',im.shape)
         
         t2 = time_sync()
@@ -168,18 +167,21 @@ from multiprocessing import Process,Queue
 import time,random,os
 def consumer(q, detect, client_num, image_num, batchsize):
     t1 = time_sync()
+    frames = []
     for i in range(client_num * image_num):
-        frame=q.get() 
+        for k in range(batchsize):
+            frame = q.get()
+            if frame is None:
+                break
 
-        if frame is None:
-            break
-
-        detect.run(frame)
+            frames.append(frame)
+        frames = np.stack(frames)
+        detect.run(frames)
 
     t2 = time_sync()
     durarion = t2 - t1
     print('server端总时长{:.3f}s'.format(durarion))
-    print('平均每张图片处理时长 {:.3f}ms'.format(durarion * 1000 / (client_num * image_num * batchsize)))
+    print('平均每张图片处理时长 {:.3f}ms'.format(durarion * 1000 / (client_num * image_num)))
 
 # 进程最小函数
 def producer(name, q, amount):
