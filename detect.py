@@ -54,7 +54,7 @@ from utils.torch_utils import select_device, time_sync
 class Detect:
     def __init__(self, **kwargs):
         # self.img = img
-        self.model=kwargs.get('weights', 'yolov5s.pt')
+        self.model=kwargs.get('weights', 'yolov5x.pt')
         self.device=kwargs.get('device', None)
         self.imgsz=kwargs.get('imgsz', 640)
         self.dnn=kwargs.get('dnn', False)
@@ -69,10 +69,12 @@ class Detect:
         self.model.eval()
 
     def convertImage(self, image, stride=32, auto=True):
-        img0 = cv2.imread('src/in3.jpeg') 
-        image = img0
+        # img0 = cv2.imread('src/in3.jpeg') 
+        # image = img0
 
         assert image is not None, f'Image Not Found'
+        stride = 640
+        # auto = False
         img = letterbox(image, stride, auto)[0]
         
         img = img.transpose((2, 0, 1))[::-1] # HWC to CHW, BGR to RGB
@@ -102,12 +104,17 @@ class Detect:
         im /= 255  # 0 - 255 to 0.0 - 1.0
         if len(im.shape) == 3:
             im = im[None]  # expand for batch dim
-        t2 = time_sync()
 
+        batch_image = 50
+        im = im.repeat(batch_image, 1, 1, 1)
+        print('data shape is ',im.shape)
+        
+        t2 = time_sync()
         dt.append(t2 - t1)
 
         # Inference
         self.model(im, augment=self.augment, visualize=self.visualize)
+
         t3 = time_sync()
         dt.append(t3 - t2)
 
@@ -149,15 +156,66 @@ def parse_opt():
     print_args(vars(opt))
     return opt
 
+######################## server part start ########################
+
+from multiprocessing import Process,Queue
+import time,random,os
+def consumer(q, detect, client_num):
+    t1 = time_sync()
+    for i in range(20):
+        frame=q.get() 
+
+        if frame is None:
+            break
+
+        detect.run(frame)
+
+    t2 = time_sync()
+    print('server端总时长{:.3f}s'.format(t2-t1))
+
+# 进程最小函数
+def producer(name,q):
+    发送图片间隔 = 1.0/3.0
+    t = time.time()
+    for i in range(5):
+        time.sleep(发送图片间隔)
+
+        image = cv2.imread('src/in3.jpeg')
+        image = cv2.resize(image, (1920, 1080), interpolation=cv2.INTER_AREA)
+
+        q.put(image)
+    
+    print('单个client发送图片 time usage {:.3f}s'.format(time.time() - t))
+
+######################## server part end ########################
 
 def main(opt):
     check_requirements(exclude=('tensorboard', 'thop'))
-
-    detect = Detect(**vars(opt))
-    s = Server(detect)
-    s.run()
-    s.end()
     
+    # 创建推理模型
+    detect = Detect(**vars(opt))
+
+    # 推理图片队列
+    image_queue = Queue()
+    
+    clients = []
+    client_num = 4
+    # 创建client进程
+    for i in range(client_num):
+        clients.append(
+            Process(target=producer,args=('client'+str(i), image_queue))
+        )
+
+    # 启动client进程
+    for client in clients:
+        client.start()
+
+    # 启动server（本进程即为server进程）
+    consumer(image_queue, detect, client_num)
+
+    # join client进程
+    for client in clients:
+        client.join()
 
 if __name__ == "__main__":
     opt = parse_opt()
