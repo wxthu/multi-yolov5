@@ -55,7 +55,7 @@ from utils.torch_utils import select_device, time_sync
 
 class Detect:
     def __init__(self, **kwargs):
-        # self.img = img
+        self.pre_model=kwargs.get('pre_weights', 'yolov5s.pt')
         self.model=kwargs.get('weights', 'yolov5x.pt')
         self.device=kwargs.get('device', None)
         self.imgsz=kwargs.get('imgsz', 640)
@@ -63,11 +63,12 @@ class Detect:
         self.half=kwargs.get('half', False)
         self.augment=kwargs.get('augment', False)
         self.visualize=kwargs.get('visualize', False)
-        # self.batchsize=kwargs.get('bs', 1)
+        self.sequence=kwargs.get('sequence', False)
 
         # Load model
         self.device = select_device(self.device)
         self.model = DetectMultiBackend(self.model, device=self.device, dnn=self.dnn)
+        self.pre_model = DetectMultiBackend(self.pre_model, device=self.device, dnn=self.dnn)
 
         self.model.eval()
 
@@ -112,6 +113,9 @@ class Detect:
         dt.append(t2 - t1)
 
         # Inference
+        if self.sequence is True:
+            print("***** 5s followed by 5x *****")
+            self.pre_model(im, augment=self.augment, visualize=self.visualize)
         self.model(im, augment=self.augment, visualize=self.visualize)
 
         t3 = time_sync()
@@ -154,6 +158,7 @@ def parse_opt():
     parser.add_argument('--img_num', type=int, default=25, help='the number of img sent by each client')
     parser.add_argument('--client_num', type=int, default=4, help='the number of video stream')
     parser.add_argument('--server_num', type=int, default=1, help='the number of detector')
+    parser.add_argument('--sequence', action='store_true', help='whether run 5s followed by 5x')
     opt = parser.parse_args()
     opt.imgsz *= 2 if len(opt.imgsz) == 1 else 1  # expand
     print_args(vars(opt))
