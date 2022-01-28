@@ -212,7 +212,7 @@ def producer(name, q, amount):
 
 def main(opt):
     check_requirements(exclude=('tensorboard', 'thop'))
-    multiprocessing.set_start_method('spawn')
+    # multiprocessing.set_start_method('spawn')
     
     # 创建推理模型
     args_dict = vars(opt)
@@ -222,7 +222,7 @@ def main(opt):
     image_queue = Queue()
     
     clients = []
-    servers = []
+    # servers = []
     client_num = args_dict['client_num']
     server_num = args_dict['server_num']
     image_num = args_dict['img_num']
@@ -238,20 +238,20 @@ def main(opt):
         client.start()
 
     # 创建和启动server进程
-    for j in range(server_num):
-        servers.append(
-            Process(target=consumer, args=(image_queue, detect, client_num, image_num, batchsize))
-        )
-
-    for server in servers:
-        server.start()
+    # for j in range(server_num):
+    #     servers.append(
+    #         Process(target=consumer, args=(image_queue, detect, client_num, image_num, batchsize))
+    #     )
+    consumer(image_queue, detect, client_num, image_num, batchsize)
+    # for server in servers:
+    #     server.start()
 
     # join client进程
     for client in clients:
         client.join()
 
-    for server in servers:
-        server.join()
+    # for server in servers:
+    #     server.join()
 
 if __name__ == "__main__":
     opt = parse_opt()
