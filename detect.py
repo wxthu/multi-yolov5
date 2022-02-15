@@ -172,10 +172,10 @@ def consumer(q, detect, client_num, image_num, batchsize):
     t1 = time_sync()
     count = 0
     frames = []
-    for _ in range(client_num * image_num):
+    for x in range(client_num * image_num):
         frame = q.get()
         if count < batchsize:
-            if frame is None:
+            if x == client_num * image_num - 1:
                 frames = np.stack(frames)
                 detect.run(frames)
                 break
