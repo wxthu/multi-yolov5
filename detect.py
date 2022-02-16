@@ -170,23 +170,19 @@ from multiprocessing import Process,Queue
 import time,random,os
 def consumer(q, detect, client_num, image_num, batchsize):
     t1 = time_sync()
-    count = 0
+    sums = client_num * image_num
     frames = []
-    for x in range(client_num * image_num):
-        frame = q.get()
-        if count < batchsize:
-            if x == client_num * image_num - 1:
+    for x in range(1, sums + 1):
+        frames.append(q.get())
+        if x % batchsize != 0:
+            if x == sums:
                 frames = np.stack(frames)
                 detect.run(frames)
                 break
-            frames.append(frame)
-            count += 1
         else:
-            count = 1
             frames = np.stack(frames)
             detect.run(frames)
             frames = []
-            frames.append(frame)
 
     t2 = time_sync()
     durarion = t2 - t1
@@ -203,8 +199,9 @@ def producer(name, q, amount):
 
         image = cv2.imread('src/in3.jpeg')
         image = cv2.resize(image, (1920, 1080), interpolation=cv2.INTER_AREA)
-
-        q.put(image)
+        
+        for each in q:
+            each.put(image)
     
     print('单个client发送图片 time usage {:.3f}s'.format(time.time() - t))
 
@@ -212,46 +209,46 @@ def producer(name, q, amount):
 
 def main(opt):
     check_requirements(exclude=('tensorboard', 'thop'))
-    # multiprocessing.set_start_method('spawn')
+    multiprocessing.set_start_method('spawn')
     
     # 创建推理模型
     args_dict = vars(opt)
     detect = Detect(**args_dict)
-
-    # 推理图片队列
-    image_queue = Queue()
     
-    clients = []
-    # servers = []
     client_num = args_dict['client_num']
     server_num = args_dict['server_num']
     image_num = args_dict['img_num']
     batchsize = args_dict['bs']
+
+    # 推理图片队列
+    image_queue = [Queue() for _ in range(server_num)]
+
+    start_time = time_sync()
     # 创建client进程
-    for i in range(client_num):
-        clients.append(
-            Process(target=producer,args=('client'+str(i), image_queue, image_num))
-        )
+    clients = [Process(target=producer,args=('client'+str(i), image_queue, image_num)) for i in range(client_num)]
 
     # 启动client进程
     for client in clients:
         client.start()
 
     # 创建和启动server进程
-    # for j in range(server_num):
-    #     servers.append(
-    #         Process(target=consumer, args=(image_queue, detect, client_num, image_num, batchsize))
-    #     )
-    consumer(image_queue, detect, client_num, image_num, batchsize)
-    # for server in servers:
-    #     server.start()
+    servers = [Process(target=consumer, args=(image_queue[i], detect, client_num, image_num, batchsize)) 
+                for i in range(server_num)]
+    # consumer(image_queue, detect, client_num, image_num, batchsize)
+    for server in servers:
+        server.start()
 
     # join client进程
     for client in clients:
         client.join()
 
-    # for server in servers:
-    #     server.join()
+    for server in servers:
+        server.join()
+
+    duration = time_sync() - start_time
+    throughput = client_num * image_num / duration
+    print("***** The system end-to-end latency is : {:.3f}s *****".format(duration))
+    print("***** The system throughput for {} detector(s) is : {:.2f} *****".format(server_num, throughput))
 
 if __name__ == "__main__":
     opt = parse_opt()
