@@ -26,11 +26,11 @@ Usage - formats:
 
 import argparse
 import multiprocessing
+from multiprocessing import Process
 import os
 import sys
 from pathlib import Path
 from unittest import defaultTestLoader
-
 from PIL.Image import Image
 import numpy as np
 
@@ -38,7 +38,10 @@ import cv2
 import torch
 import torch.backends.cudnn as cudnn
 from utils.augmentations import letterbox, batch_letterbox
-from src.server import *
+from encode_decode import encode_dict, decode_dict
+import socket
+import socketserver
+from controller import Controller
 
 FILE = Path(__file__).resolve()
 ROOT = FILE.parents[0]  # YOLOv5 root directory
@@ -55,9 +58,8 @@ from utils.torch_utils import select_device, time_sync
 
 class Detect:
     def __init__(self, **kwargs):
-        self.pre_model=kwargs.get('pre_weights', 'yolov5s.pt')
         self.model=kwargs.get('weights', 'yolov5x.pt')
-        self.device=kwargs.get('device', None)
+        self.device=kwargs.get('device', 'cpu')
         self.imgsz=kwargs.get('imgsz', 640)
         self.dnn=kwargs.get('dnn', False)
         self.half=kwargs.get('half', False)
@@ -68,8 +70,6 @@ class Detect:
         # Load model
         self.device = select_device(self.device)
         self.model = DetectMultiBackend(self.model, device=self.device, dnn=self.dnn)
-        self.pre_model = DetectMultiBackend(self.pre_model, device=self.device, dnn=self.dnn)
-
         self.model.eval()
 
     def convertImage(self, image, stride=32, auto=True):
@@ -87,14 +87,14 @@ class Detect:
 
     @torch.no_grad()
     def run(self, image):
-
+        self.model.to('cuda')
         stride, pt, jit, onnx, engine = self.model.stride, self.model.pt, self.model.jit, self.model.onnx, self.model.engine
         self.imgsz = check_img_size(self.imgsz, s=stride)  # check image size
         # Half
         half = self.half & (pt or jit or onnx or engine) and self.device.type != 'cpu'  # FP16 supported on limited backends with CUDA
         if pt or jit:
             self.model.model.half() if half else self.model.model.float()
-
+        # crop img to specific size
         img = self.convertImage(image, stride=stride, auto=pt)
 
         # Run inference
@@ -106,25 +106,64 @@ class Detect:
         if len(im.shape) == 3:
             im = im[None]  # expand for batch dim
 
-        # im = im.repeat(self.batchsize, 1, 1, 1)
         print('data shape is ',im.shape)
         
         t2 = time_sync()
         dt.append(t2 - t1)
 
         # Inference
-        if self.sequence is True:
-            print("***** 5s followed by 5x *****")
-            self.pre_model(im, augment=self.augment, visualize=self.visualize)
         self.model(im, augment=self.augment, visualize=self.visualize)
-
         t3 = time_sync()
         dt.append(t3 - t2)
 
         # Print results
         t = tuple(x * 1E3 for x in dt)  
         LOGGER.info(f'Speed: %.1fms pre-process, %.1fms inference' % t)
+        self.model.to('cpu')
 
+class Worker:
+    """
+    单个detector
+    """
+    def __init__(self, index, v_num, engine : Detect):
+        self.index = index
+        self.videos = v_num
+        self.engine = engine
+        self.detector_state = {}    # detector_state记录了当前单个detector的各种信息
+        self.detector_state.update({index :'ready'})
+        self.q = []
+
+    def update_state(self):
+        """
+        更新self.detector_state
+        """
+        self.detector_state.update({self.index : 'done'})
+        return
+
+    def run(self):
+        sk = socket.socket()
+        sk.connect(('127.0.0.1', 8009))
+        
+        while True:
+            print('detector', self.index, 'img queue len is', len(self.q))
+            
+            # TODO 接收controller的控制信号
+            recv_dict = decode_dict(sk.recv(115200))
+            if 'img' in recv_dict:
+                for _ in range(self.videos):
+                    self.q.append(np.array(recv_dict['img']))
+            
+            if recv_dict[self.index] == 'infer' and len(self.q) > 0:
+                self.engine(self.q.pop())
+                self.update_state()
+            
+            sk.send(encode_dict(self.detector_state))
+        
+        sk.close()
+
+
+def detector_run(detector):
+    detector.run()
 
 def parse_opt():
     parser = argparse.ArgumentParser()
@@ -156,99 +195,40 @@ def parse_opt():
     parser.add_argument('--dnn', action='store_true', help='use OpenCV DNN for ONNX inference')
     parser.add_argument('--bs', type=int, default=1, help='batch size of img')
     parser.add_argument('--img_num', type=int, default=25, help='the number of img sent by each client')
-    parser.add_argument('--client_num', type=int, default=4, help='the number of video stream')
-    parser.add_argument('--server_num', type=int, default=1, help='the number of detector')
+    parser.add_argument('--videos', type=int, default=4, help='the number of video stream')
+    parser.add_argument('--workers', type=int, default=1, help='the number of detector')
     parser.add_argument('--sequence', action='store_true', help='whether run 5s followed by 5x')
     opt = parser.parse_args()
     opt.imgsz *= 2 if len(opt.imgsz) == 1 else 1  # expand
     print_args(vars(opt))
     return opt
 
-######################## server part start ########################
-
-from multiprocessing import Process,Queue
-import time,random,os
-def consumer(q, detect, client_num, image_num, batchsize):
-    t1 = time_sync()
-    sums = client_num * image_num
-    frames = []
-    for x in range(1, sums + 1):
-        frames.append(q.get())
-        if x % batchsize != 0:
-            if x == sums:
-                frames = np.stack(frames)
-                detect.run(frames)
-                break
-        else:
-            frames = np.stack(frames)
-            detect.run(frames)
-            frames = []
-
-    t2 = time_sync()
-    durarion = t2 - t1
-    print('server端总时长{:.3f}s'.format(durarion))
-    print('平均每张图片处理时长 {:.3f}ms'.format(durarion * 1000 / (client_num * image_num)))
-    print('remainig imgs : {}'.format(q.qsize()))
-
-# 进程最小函数
-def producer(name, q, amount):
-    freq = 1.0/3.0
-    t = time.time()
-    for i in range(amount):
-        time.sleep(freq)
-
-        image = cv2.imread('src/in3.jpeg')
-        image = cv2.resize(image, (1920, 1080), interpolation=cv2.INTER_AREA)
-        
-        for each in q:
-            each.put(image)
-    
-    print('单个client发送图片 time usage {:.3f}s'.format(time.time() - t))
-
-######################## server part end ########################
-
 def main(opt):
     check_requirements(exclude=('tensorboard', 'thop'))
-    multiprocessing.set_start_method('spawn')
+    # multiprocessing.set_start_method('spawn')
     
     # 创建推理模型
     args_dict = vars(opt)
     detect = Detect(**args_dict)
     
-    client_num = args_dict['client_num']
-    server_num = args_dict['server_num']
+    videos = args_dict['videos']
+    workers = args_dict['workers']
     image_num = args_dict['img_num']
     batchsize = args_dict['bs']
 
-    # 推理图片队列
-    image_queue = [Queue() for _ in range(server_num)]
-
+    detectors = [Process(target=detector_run, args=(Worker(i, videos, detect),)) for i in range(workers)]
+    
     start_time = time_sync()
-    # 创建client进程
-    clients = [Process(target=producer,args=('client'+str(i), image_queue, image_num)) for i in range(client_num)]
-
-    # 启动client进程
-    for client in clients:
-        client.start()
-
-    # 创建和启动server进程
-    servers = [Process(target=consumer, args=(image_queue[i], detect, client_num, image_num, batchsize)) 
-                for i in range(server_num)]
-    # consumer(image_queue, detect, client_num, image_num, batchsize)
-    for server in servers:
-        server.start()
-
-    # join client进程
-    for client in clients:
-        client.join()
-
-    for server in servers:
-        server.join()
+    for detector in detectors:
+        detector.start()
+    
+    for detector in detectors:
+        detector.join()
 
     duration = time_sync() - start_time
-    throughput = client_num * image_num / duration
+    
     print("***** The system end-to-end latency is : {:.3f}s *****".format(duration))
-    print("***** The system throughput for {} detector(s) is : {:.2f} *****".format(server_num, throughput))
+    # print("***** The system throughput for {} detector(s) is : {:.2f} *****".format(server_num, throughput))
 
 if __name__ == "__main__":
     opt = parse_opt()
