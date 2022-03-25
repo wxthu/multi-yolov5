@@ -143,7 +143,7 @@ class Worker:
 
     def run(self):
         sk = socket.socket()
-        sk.connect(('127.0.0.1', 8009))
+        sk.connect(('127.0.0.1', 8010))
         
         while True:
             print('detector', self.index, 'img queue len is', len(self.q))
@@ -205,8 +205,8 @@ def parse_opt():
     parser.add_argument('--bs', type=int, default=1, help='batch size of img')
     parser.add_argument('--img_num', type=int, default=25, help='the number of img sent by each client')
     parser.add_argument('--videos', type=int, default=4, help='the number of video stream')
-    parser.add_argument('--workers', type=int, default=1, help='the number of detector')
-    parser.add_argument('--sequence', action='store_true', help='whether run 5s followed by 5x')
+    parser.add_argument('--workers', type=int, default=3, help='the number of detector')
+    # parser.add_argument('--sequence', action='store_true', help='whether run 5s followed by 5x')
     opt = parser.parse_args()
     opt.imgsz *= 2 if len(opt.imgsz) == 1 else 1  # expand
     print_args(vars(opt))
@@ -214,7 +214,7 @@ def parse_opt():
 
 def main(opt):
     check_requirements(exclude=('tensorboard', 'thop'))
-    # multiprocessing.set_start_method('spawn')
+    multiprocessing.set_start_method('spawn')
     
     # 创建推理模型
     args_dict = vars(opt)
