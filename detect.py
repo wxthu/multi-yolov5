@@ -125,9 +125,10 @@ class Worker:
     """
     单个detector
     """
-    def __init__(self, index, v_num, engine : Detect):
+    def __init__(self, index, v_num, batchsize, engine : Detect):
         self.index = index
         self.videos = v_num
+        self.batchsize = batchsize
         self.engine = engine
         self.detector_state = {}    # detector_state记录了当前单个detector的各种信息
         self.detector_state.update({index :'ready'})
@@ -153,8 +154,16 @@ class Worker:
                 for _ in range(self.videos):
                     self.q.append(np.array(recv_dict['img']))
             
-            if recv_dict[self.index] == 'infer' and len(self.q) > 0:
-                self.engine(self.q.pop())
+            if recv_dict[self.index] == 'infer':
+                frames = []
+                for _ in range(self.batchsize):
+                    if len(self.q) > 0:
+                        frames.append(self.q.pop())
+                    else:
+                        print(f'all the images have been processed by worker {self.index}')  
+                        break
+                
+                self.engine(np.stack(frames))
                 self.update_state()
             
             sk.send(encode_dict(self.detector_state))
@@ -216,7 +225,7 @@ def main(opt):
     image_num = args_dict['img_num']
     batchsize = args_dict['bs']
 
-    detectors = [Process(target=detector_run, args=(Worker(i, videos, detect),)) for i in range(workers)]
+    detectors = [Process(target=detector_run, args=(Worker(i, videos, batchsize, detect),)) for i in range(workers)]
     
     start_time = time_sync()
     for detector in detectors:
