@@ -12,8 +12,8 @@ class Controller(socketserver.BaseRequestHandler):
     """
     def __init__(self, request: Any, client_address: Any, server: socketserver.BaseServer, detector_num=2, img_num=50):
         self.act_id = 0  # active task id
-        self.detector_num = detector_num
-        self.img_num = img_num
+        self.detector_num = 2
+        self.img_num = 1
         self.controller_state = {}   # 把所有detector的detector_state更新到自己的controller_state中
         for i in range(self.detector_num):
             self.controller_state.update({str(i) :'ready'})
@@ -28,10 +28,9 @@ class Controller(socketserver.BaseRequestHandler):
         self.controller_state.update(state_dict)
 
     def init_msg(self):
-        init_state = {}
-        init_state.update({self.act_id : 'infer'})
-        # init_state.update({'img': np.zeros(shape=(1920, 1080)).tolist()})
-        init_state.update({'img': 'ready'})
+        init_state = self.controller_state
+        init_state.update({str(self.act_id) : 'infer'})
+        init_state.update({'img': []})
         return init_state
         
     def get_action(self):
@@ -39,7 +38,7 @@ class Controller(socketserver.BaseRequestHandler):
         根据当前的self.controller_state, 对所有的detector进行控制
         """
         print("current active state : {} / {}".format(self.controller_state[str(self.act_id)], self.act_id))
-        new_state = {}
+        # new_state = self.controller_state
         if self.controller_state[str(self.act_id)] == 'done':
             self.controller_state[str(self.act_id)] = 'idle'
          
@@ -47,9 +46,9 @@ class Controller(socketserver.BaseRequestHandler):
                 self.act_id = 0
             else:
                 self.act_id += 1
-            new_state.update({self.act_id : 'infer'})
+            self.controller_state.update({str(self.act_id) : 'infer'})
                 
-        return new_state
+        return self.controller_state
 
     def handle(self):
         conn = self.request
@@ -71,7 +70,7 @@ class Controller(socketserver.BaseRequestHandler):
 
             if time.time() - now >= interval:
                 if img_count < self.img_num:
-                    send_dict.update({'img': 'ready'})
+                    send_dict.update({'img': []})
                     img_count += 1
                 now = time.time()
             

@@ -17,7 +17,7 @@ Usage - formats:
                                          yolov5s.onnx               # ONNX Runtime or OpenCV DNN with --dnn
                                          yolov5s.xml                # OpenVINO
                                          yolov5s.engine             # TensorRT
-                                         yolov5s.mlmodel            # CoreML (macOS-only)
+                                         yolov5s.mlmodel            # CoreML (MacOS-only)
                                          yolov5s_saved_model        # TensorFlow SavedModel
                                          yolov5s.pb                 # TensorFlow GraphDef
                                          yolov5s.tflite             # TensorFlow Lite
@@ -42,7 +42,7 @@ from utils.augmentations import letterbox, batch_letterbox
 from encode_decode import encode_dict, decode_dict
 import socket
 import socketserver
-from controller import Controller
+from controller_test import Controller
 
 FILE = Path(__file__).resolve()
 ROOT = FILE.parents[0]  # YOLOv5 root directory
@@ -52,52 +52,54 @@ ROOT = Path(os.path.relpath(ROOT, Path.cwd()))  # relative
 
 from models.common import DetectMultiBackend
 from utils.datasets import IMG_FORMATS, VID_FORMATS, LoadImages, LoadStreams
-from utils.general import (LOGGER, check_file, check_img_size, check_imshow, check_requirements, colorstr, cv2,
+from utils.general import (LOGGER, check_file, check_img_size, check_imshow, check_requirements, colorstr,
                            increment_path, non_max_suppression, print_args, scale_coords, strip_optimizer, xyxy2xywh)
 from utils.plots import Annotator, colors, save_one_box
 from utils.torch_utils import select_device, time_sync
 
+
 class Detect:
     def __init__(self, **kwargs):
-        self.model=kwargs.get('weights', 'yolov5x.pt')
-        self.device=kwargs.get('device', 'cpu')
-        self.imgsz=kwargs.get('imgsz', 640)
-        self.dnn=kwargs.get('dnn', False)
-        self.half=kwargs.get('half', False)
-        self.augment=kwargs.get('augment', False)
-        self.visualize=kwargs.get('visualize', False)
-        self.sequence=kwargs.get('sequence', False)
-
+        self.model = kwargs.get('weights', 'yolov5x.pt')
+        self.device = kwargs.get('device', 'cpu')
+        self.imgsz = kwargs.get('imgsz', 640)
+        self.dnn = kwargs.get('dnn', False)
+        self.half = kwargs.get('half', False)
+        self.augment = kwargs.get('augment', False)
+        self.visualize = kwargs.get('visualize', False)
+        self.sequence = kwargs.get('sequence', False)
+        
         # Load model
         self.device = select_device(self.device)
         self.model = DetectMultiBackend(self.model, device=self.device, dnn=self.dnn)
         self.model.eval()
-
+    
     def convertImage(self, image, stride=32, auto=True):
-       
+        
         assert image is not None, f'Image Not Found'
         stride = 640
         # auto = False
         # img = batch_letterbox(image, stride, auto)[0]
         # img = img.transpose((2, 0, 1))[::-1] # HWC to CHW, BGR to RGB
         img = batch_letterbox(image, stride, auto)
-        img = img.transpose((0, 3, 1, 2))[::-1] # HWC to CHW, BGR to RGB
+        img = img.transpose((0, 3, 1, 2))[::-1]  # HWC to CHW, BGR to RGB
         img = np.ascontiguousarray(img)
-
+        
         return img
-
+    
     @torch.no_grad()
     def run(self, image):
         self.model.to('cuda')
         stride, pt, jit, onnx, engine = self.model.stride, self.model.pt, self.model.jit, self.model.onnx, self.model.engine
         self.imgsz = check_img_size(self.imgsz, s=stride)  # check image size
         # Half
-        half = self.half & (pt or jit or onnx or engine) and self.device.type != 'cpu'  # FP16 supported on limited backends with CUDA
+        half = self.half & (
+                    pt or jit or onnx or engine) and self.device.type != 'cpu'  # FP16 supported on limited backends with CUDA
         if pt or jit:
             self.model.model.half() if half else self.model.model.float()
         # crop img to specific size
         img = self.convertImage(image, stride=stride, auto=pt)
-
+        
         # Run inference
         dt = []
         t1 = time_sync()
@@ -106,78 +108,82 @@ class Detect:
         im /= 255  # 0 - 255 to 0.0 - 1.0
         if len(im.shape) == 3:
             im = im[None]  # expand for batch dim
-
-        print('data shape is ',im.shape)
+        
+        print('data shape is ', im.shape)
         
         t2 = time_sync()
         dt.append(t2 - t1)
-
+        
         # Inference
         self.model(im, augment=self.augment, visualize=self.visualize)
         t3 = time_sync()
         dt.append(t3 - t2)
-
+        
         # Print results
-        t = tuple(x * 1E3 for x in dt)  
+        t = tuple(x * 1E3 for x in dt)
         LOGGER.info(f'Speed: %.1fms pre-process, %.1fms inference' % t)
         self.model.to('cpu')
+
 
 class Worker:
     """
     单个detector
     """
-    def __init__(self, index, v_num, batchsize, engine : Detect):
+    
+    def __init__(self, index, v_num, batchsize, engine: Detect):
         self.index = str(index)
         self.videos = v_num
         self.batchsize = batchsize
         self.engine = engine
-        self.detector_state = {}    # detector_state记录了当前单个detector的各种信息
-        self.detector_state.update({str(index) :'ready'})
+        self.detector_state = {}  # detector_state记录了当前单个detector的各种信息
+        self.detector_state.update({str(index): 'ready'})
         self.q = []
-
+    
     def update_state(self):
         """
         更新self.detector_state
         """
-        self.detector_state.update({self.index : 'done'})
+        self.detector_state.update({self.index: 'done'})
         return
-
+    
     def run(self):
-        sk = socket.socket()
-        sk.connect(('127.0.0.1', 8016))
+        sk = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        server_socket.bind(('127.0.0.1', 8011))
+        server_addr = ('127.0.0.1', 8011)
         finished = False
         while True:
             print('detector', self.index, 'img queue len is', len(self.q))
-            # TODO 接收controller的控制信号
-            recv_dict = decode_dict(sk.recv(115200))
-            if 'img' in recv_dict:
-                print("begin to send img")
+            recv_msg, server_addr = sk.recvfrom(115200)
+            recv_msg = decode_dict(recv_msg)
+            print('w{} receive : {}'.format(self.index, recv_msg))
+            
+            if 'img' in recv_msg:
+                print("begin to append img")
                 for _ in range(self.videos):
                     self.q.append(np.zeros(shape=(1920, 1080, 3)))
             
-            print("w {} recv_dict is {}".format(self.index, recv_dict))
-            if self.index in recv_dict and recv_dict[self.index] == 'infer':
+            if self.index in recv_msg and recv_msg[self.index] == 'infer':
                 frames = []
                 for _ in range(self.batchsize):
                     if len(self.q) > 0:
                         frames.append(self.q.pop())
                     else:
-                        print('all the images have been processed by worker {}'.format(self.index))  
+                        print('all the images have been processed by worker {}'.format(self.index))
                         finished = True
                         break
                 if finished is True:
                     break
                 self.engine.run(np.stack(frames))
                 self.update_state()
-            print("w {} send msg : {}".format(self.index, self.detector_state))
-            sk.sendall(encode_dict(self.detector_state))
-            time.sleep(30000)
-        sk.close()
-        
-
+                
+            send_msg = encode_dict(self.detector_state)
+            sk.sendto(send_msg, server_addr)
+            
+           
 
 def detector_run(detector):
     detector.run()
+
 
 def parse_opt():
     parser = argparse.ArgumentParser()
@@ -214,8 +220,9 @@ def parse_opt():
     # parser.add_argument('--sequence', action='store_true', help='whether run 5s followed by 5x')
     opt = parser.parse_args()
     opt.imgsz *= 2 if len(opt.imgsz) == 1 else 1  # expand
-    print_args(vars(opt))
+    print_args(FILE.stem, opt)
     return opt
+
 
 def main(opt):
     check_requirements(exclude=('tensorboard', 'thop'))
@@ -231,7 +238,7 @@ def main(opt):
     workers = args_dict['workers']
     image_num = args_dict['img_num']
     batchsize = args_dict['bs']
-
+    
     detectors = [Process(target=detector_run, args=(Worker(i, videos, batchsize, detect),)) for i in range(workers)]
     
     start_time = time_sync()
@@ -240,11 +247,12 @@ def main(opt):
     
     for detector in detectors:
         detector.join()
-
+    
     duration = time_sync() - start_time
     
     print("***** The system end-to-end latency is : {:.3f}s *****".format(duration))
     # print("***** The system throughput for {} detector(s) is : {:.2f} *****".format(server_num, throughput))
+
 
 if __name__ == "__main__":
     opt = parse_opt()
