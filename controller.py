@@ -10,13 +10,13 @@ class Controller(socketserver.BaseRequestHandler):
     """
     作为Controller, 监视所有的detector
     """
-    def __init__(self, request: Any, client_address: Any, server: socketserver.BaseServer, detector_num=3, img_num=50):
+    def __init__(self, request: Any, client_address: Any, server: socketserver.BaseServer, detector_num=2, img_num=50):
         self.act_id = 0  # active task id
         self.detector_num = detector_num
         self.img_num = img_num
         self.controller_state = {}   # 把所有detector的detector_state更新到自己的controller_state中
         for i in range(self.detector_num):
-            self.controller_state.update({i :'ready'})
+            self.controller_state.update({str(i) :'ready'})
         # self.controller_state.update({self.act_id :'infer'})
         super().__init__(request, client_address, server)
 
@@ -30,18 +30,20 @@ class Controller(socketserver.BaseRequestHandler):
     def init_msg(self):
         init_state = {}
         init_state.update({self.act_id : 'infer'})
-        init_state.update({'img': np.zeros(shape=(1920, 1080)).tolist()})
+        # init_state.update({'img': np.zeros(shape=(1920, 1080)).tolist()})
+        init_state.update({'img': 'ready'})
         return init_state
         
     def get_action(self):
         """
         根据当前的self.controller_state, 对所有的detector进行控制
         """
+        print("current active state : {} / {}".format(self.controller_state[str(self.act_id)], self.act_id))
         new_state = {}
-        if self.controller_state[self.act_id] == 'done':
-            self.controller_state[self.act_id] = 'idle'
+        if self.controller_state[str(self.act_id)] == 'done':
+            self.controller_state[str(self.act_id)] = 'idle'
          
-            if self.act_id + 1 == self.detector_num:
+            if self.act_id + 1  >= self.detector_num:
                 self.act_id = 0
             else:
                 self.act_id += 1
@@ -51,29 +53,33 @@ class Controller(socketserver.BaseRequestHandler):
 
     def handle(self):
         conn = self.request
-        interval = 1/3
+        interval = 1/50
         now = time.time()
         img_count = 1  # we have sent one img in init_msg function 
         
         send_dict = self.init_msg()
         conn.sendall(encode_dict(send_dict))
+        print('start control')
         while True:
             # TODO 接收detector的状态信息
             recv_dict = decode_dict(conn.recv(115200))
-            
+            print("controller recv : {}".format(recv_dict))
             # TODO 更新controller_state
             self.update_state_table(recv_dict)
             send_dict = self.get_action()
+            print("to send to worker : {}".format(send_dict))
 
             if time.time() - now >= interval:
                 if img_count < self.img_num:
-                    send_dict.update({'img': np.zeros(shape=(1920, 1080)).tolist()})
+                    send_dict.update({'img': 'ready'})
                     img_count += 1
                 now = time.time()
-                
-                conn.sendall(encode_dict(send_dict))
+            
+            # TODO null package
+            conn.sendall(encode_dict(send_dict))
+            # conn.sendall(encode_dict({}))
 
 
 if __name__ == "__main__":
-    server = socketserver.ThreadingTCPServer(('127.0.0.1', 8010), Controller)
+    server = socketserver.ThreadingTCPServer(('127.0.0.1', 8016), Controller)
     server.serve_forever()
