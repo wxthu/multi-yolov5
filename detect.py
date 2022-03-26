@@ -33,6 +33,7 @@ from pathlib import Path
 from unittest import defaultTestLoader
 from PIL.Image import Image
 import numpy as np
+import time
 
 import cv2
 import torch
@@ -126,12 +127,12 @@ class Worker:
     单个detector
     """
     def __init__(self, index, v_num, batchsize, engine : Detect):
-        self.index = index
+        self.index = str(index)
         self.videos = v_num
         self.batchsize = batchsize
         self.engine = engine
         self.detector_state = {}    # detector_state记录了当前单个detector的各种信息
-        self.detector_state.update({index :'ready'})
+        self.detector_state.update({str(index) :'ready'})
         self.q = []
 
     def update_state(self):
@@ -143,32 +144,36 @@ class Worker:
 
     def run(self):
         sk = socket.socket()
-        sk.connect(('127.0.0.1', 8010))
-        
+        sk.connect(('127.0.0.1', 8016))
+        finished = False
         while True:
             print('detector', self.index, 'img queue len is', len(self.q))
-            
             # TODO 接收controller的控制信号
             recv_dict = decode_dict(sk.recv(115200))
             if 'img' in recv_dict:
+                print("begin to send img")
                 for _ in range(self.videos):
-                    self.q.append(np.array(recv_dict['img']))
-            
-            if recv_dict[self.index] == 'infer':
+                    self.q.append(np.zeros(shape=(1920, 1080, 3)))
+            time.sleep(5)
+            print("w {} recv_dict is {}".format(self.index, recv_dict))
+            if self.index in recv_dict and recv_dict[self.index] == 'infer':
                 frames = []
                 for _ in range(self.batchsize):
                     if len(self.q) > 0:
                         frames.append(self.q.pop())
                     else:
-                        print(f'all the images have been processed by worker {self.index}')  
+                        print('all the images have been processed by worker {}'.format(self.index))  
+                        finished = True
                         break
-                
-                self.engine(np.stack(frames))
+                if finished is True:
+                    break
+                self.engine.run(np.stack(frames))
                 self.update_state()
-            
-            sk.send(encode_dict(self.detector_state))
+            print("w {} send msg : {}".format(self.index, self.detector_state))
+            sk.sendall(encode_dict(self.detector_state))
         
         sk.close()
+        
 
 
 def detector_run(detector):
@@ -205,7 +210,7 @@ def parse_opt():
     parser.add_argument('--bs', type=int, default=1, help='batch size of img')
     parser.add_argument('--img_num', type=int, default=25, help='the number of img sent by each client')
     parser.add_argument('--videos', type=int, default=4, help='the number of video stream')
-    parser.add_argument('--workers', type=int, default=3, help='the number of detector')
+    parser.add_argument('--workers', type=int, default=2, help='the number of detector')
     # parser.add_argument('--sequence', action='store_true', help='whether run 5s followed by 5x')
     opt = parser.parse_args()
     opt.imgsz *= 2 if len(opt.imgsz) == 1 else 1  # expand
@@ -221,6 +226,8 @@ def main(opt):
     detect = Detect(**args_dict)
     
     videos = args_dict['videos']
+    # make sure to modify detector_num in Controller manually
+    # temp solution, to do in future
     workers = args_dict['workers']
     image_num = args_dict['img_num']
     batchsize = args_dict['bs']
