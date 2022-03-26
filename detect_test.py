@@ -132,11 +132,12 @@ class Worker:
     
     def __init__(self, index, v_num, batchsize, engine: Detect):
         self.index = str(index)
+        self.id = index
         self.videos = v_num
         self.batchsize = batchsize
         self.engine = engine
         self.detector_state = {}  # detector_state记录了当前单个detector的各种信息
-        self.detector_state.update({str(index): 'ready'})
+        self.detector_state.update({str(index): 'idle'})
         self.q = []
     
     def update_state(self):
@@ -148,8 +149,8 @@ class Worker:
     
     def run(self):
         sk = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        server_socket.bind(('127.0.0.1', 8011))
-        server_addr = ('127.0.0.1', 8011)
+        sk.bind(('127.0.0.1', 8001+self.id))
+        # server_addr = ('127.0.0.1', 8000)  
         finished = False
         while True:
             print('detector', self.index, 'img queue len is', len(self.q))
@@ -173,12 +174,12 @@ class Worker:
                         break
                 if finished is True:
                     break
-                self.engine.run(np.stack(frames))
+                pred = self.engine.run(np.stack(frames))
                 self.update_state()
                 
             send_msg = encode_dict(self.detector_state)
             sk.sendto(send_msg, server_addr)
-            
+            # time.sleep(5)
            
 
 def detector_run(detector):
@@ -216,7 +217,7 @@ def parse_opt():
     parser.add_argument('--bs', type=int, default=1, help='batch size of img')
     parser.add_argument('--img_num', type=int, default=25, help='the number of img sent by each client')
     parser.add_argument('--videos', type=int, default=4, help='the number of video stream')
-    parser.add_argument('--workers', type=int, default=2, help='the number of detector')
+    parser.add_argument('--workers', type=int, default=1, help='the number of detector')
     # parser.add_argument('--sequence', action='store_true', help='whether run 5s followed by 5x')
     opt = parser.parse_args()
     opt.imgsz *= 2 if len(opt.imgsz) == 1 else 1  # expand
