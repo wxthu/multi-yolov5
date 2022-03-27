@@ -179,7 +179,7 @@ class Worker:
                 
             send_msg = encode_dict(self.detector_state)
             sk.sendto(send_msg, server_addr)
-            # time.sleep(5)
+            time.sleep(5)
            
 
 def detector_run(detector):
