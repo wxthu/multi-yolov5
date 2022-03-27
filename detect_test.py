@@ -178,9 +178,7 @@ class Worker:
                 self.update_state()
                 
             send_msg = encode_dict(self.detector_state)
-            sk.sendto(send_msg, server_addr)
-            time.sleep(5)
-           
+            sk.sendto(send_msg, server_addr)           
 
 def detector_run(detector):
     detector.run()
@@ -217,7 +215,7 @@ def parse_opt():
     parser.add_argument('--bs', type=int, default=1, help='batch size of img')
     parser.add_argument('--img_num', type=int, default=25, help='the number of img sent by each client')
     parser.add_argument('--videos', type=int, default=4, help='the number of video stream')
-    parser.add_argument('--workers', type=int, default=1, help='the number of detector')
+    parser.add_argument('--workers', type=int, default=2, help='the number of detector')
     # parser.add_argument('--sequence', action='store_true', help='whether run 5s followed by 5x')
     opt = parser.parse_args()
     opt.imgsz *= 2 if len(opt.imgsz) == 1 else 1  # expand
@@ -245,7 +243,8 @@ def main(opt):
     start_time = time_sync()
     for detector in detectors:
         detector.start()
-    
+    # c = Controller()
+    # c.run()
     for detector in detectors:
         detector.join()
     
