@@ -9,7 +9,7 @@ class Controller:
     作为Controller, 监视所有的detector
     """
     
-    def __init__(self, detector_num=1, img_num=10):
+    def __init__(self, detector_num=2, img_num=10):
         self.act_id = 0  # active task id
         self.detector_num = detector_num
         self.img_num = img_num
@@ -44,9 +44,10 @@ class Controller:
             else:
                 self.act_id += 1
             self.controller_state.update({str(self.act_id): 'infer'})
+            new_state.update({str(self.act_id): 'infer'})
             print('control state update -> worker {}'.format(self.act_id))
             print('current cstate : {}'.format(self.controller_state))
-        return self.controller_state
+        return new_state
     
     def run(self):
         """
@@ -73,20 +74,20 @@ class Controller:
             print("^^^ before update, ctrl state : {} ^^^".format(self.controller_state))
             self.update_state_table(recv_msg)
             print("^^^ update ctrl state : {} ^^^".format(self.controller_state))
-            send_msgs = self.get_action()
+            send_msg = self.get_action()
             print("&& after get_ac, ctrl state : {} &&".format(self.controller_state))
-            print("to send to worker : {}".format(send_msgs))
+            print("to send to worker : {}".format(send_msg))
             
             if time.time() - now >= interval:
                 if img_count < self.img_num:
-                    send_msgs.update({'img' : []})
+                    send_msg.update({'img' : []})
                     img_count += 1
                 
                 now = time.time()
             # send back to current worker address
-            send_msgs = encode_dict(send_msgs)
-            server_socket.sendto(send_msgs, client1_addr)
-            server_socket.sendto(send_msgs, client2_addr)
+            send_msg = encode_dict(send_msg)
+            server_socket.sendto(send_msg, client1_addr)
+            server_socket.sendto(send_msg, client2_addr)
 
 
 if __name__ == "__main__":
