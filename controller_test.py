@@ -61,7 +61,7 @@ class Controller:
         num = server_socket.sendto(encode_dict(send_msg), client1_addr)
         num = server_socket.sendto(encode_dict(send_msg), client2_addr)
         print('*** controller initial sending success {}***'.format(num))
-        
+        print("initial ctrl state : {} ".format(self.controller_state))
         interval = 1/50
         img_count = 1  # we have sent one img in init_msg function 
         now = time.time()
@@ -70,9 +70,11 @@ class Controller:
             recv_msg, client_addr = server_socket.recvfrom(115200)
             recv_msg = decode_dict(recv_msg)
             print("controller recv : {}".format(recv_msg))
-            
+            print("^^^ before update, ctrl state : {} ^^^".format(self.controller_state))
             self.update_state_table(recv_msg)
+            print("^^^ update ctrl state : {} ^^^".format(self.controller_state))
             send_msgs = self.get_action()
+            print("&& after get_ac, ctrl state : {} &&".format(self.controller_state))
             print("to send to worker : {}".format(send_msgs))
             
             if time.time() - now >= interval:
