@@ -131,39 +131,37 @@ class Controller:
     作为Controller, 监视所有的detector
     """
     
-    def __init__(self, detector_num=1, img_num=100, cmdQueues=None, imgQueues=None):
+    def __init__(self, detector_num=1, img_num=100, c2wQueues=None, w2cQueues=None, imgQueues=None):
+        """ 
+        two-way communiaction to prevent message contention
+        """
         self.act_id = 0  # active task id
         self.detector_num = detector_num
         self.img_num = img_num
-        self.cmdQueues = cmdQueues
+        self.c2wQueues = c2wQueues
+        self.w2cQueues = w2cQueues
         self.imgQueues = imgQueues
         self.exitSignal = 0  # when all workers finished job, exitSignal == detector_num
     
     def initQueues(self):
-        for i in range(self.img_num):
-            for q in self.imgQueues:
+        for q in self.imgQueues:
+            for i in range(self.img_num):
                 q.put(np.zeros(shape=(1920, 1080, 3)))
-                
-        self.cmdQueues[self.act_id].put('infer')
+            print("*** sum of img to be processed is : {} ***".format(q.size()))    
+        self.c2wQueues[self.act_id].put('infer')
         return
     
     def update_cmd_queue(self):
-        """
-        根据当前的self.controller_state, 对所有的detector进行控制
-        """
         # for i in range(detector_num):
-        print('***  check ctrl cmd queue size : {}:{}  ***'.format(self.act_id, self.cmdQueues[self.act_id].qsize()))
-        # time.sleep(10)
-        if self.cmdQueues[self.act_id].empty() is False:
-            cmd = self.cmdQueues[self.act_id].get()
-            print('worker {} current state : {}'.format(self.act_id, cmd))
+        if self.w2cQueues[self.act_id].empty() is False:
+            cmd = self.w2cQueues[self.act_id].get()
             if cmd == 'done':
                 if self.act_id + 1 == self.detector_num:
                     self.act_id = 0
                 else:
                     self.act_id += 1
                 
-                self.cmdQueues[self.act_id].put('infer')
+                self.c2wQueues[self.act_id].put('infer')
             if cmd == 'exit':
                 self.exitSignal += 1       
         return
@@ -180,12 +178,12 @@ class Controller:
 
 class Worker:
 
-    def __init__(self, id, img_num, batchsize, engine: Detect, cmdQueue, imgQueue, time_stamp):
+    def __init__(self, id, batchsize, engine, c2wQueue, w2cQueue, imgQueue, time_stamp):
         self.id = id
-        self.img_num = img_num
         self.batchsize = batchsize
         self.engine = engine
-        self.cmdQueue = cmdQueue
+        self.c2wQueue = c2wQueue
+        self.w2cQueue = w2cQueue
         self.imgQueue = imgQueue
         self.time_stamp = time_stamp
     
@@ -194,10 +192,10 @@ class Worker:
         while True:
             if self.imgQueue.empty() is True:
                 print('all the images have been processed by worker {}'.format(self.id))
-                self.cmdQueue.put('exit')
+                self.w2cQueue.put('exit')
                 break
             
-            if self.cmdQueue.empty() is False and self.cmdQueue.get() == 'infer':
+            if self.c2wQueue.empty() is False and self.c2wQueue.get() == 'infer':
                 frames = []
                 for _ in range(self.batchsize):
                     if self.imgQueue.qsize() > 0:
@@ -205,8 +203,7 @@ class Worker:
                 pred = self.engine.run(np.stack(frames))
                 
                 # send signal to controller
-                self.cmdQueue.put('done')
-                print("worker {} send inferring finished signal, queue size: {} ".format(self.id, self.cmdQueue.qsize()))
+                self.w2cQueue.put('done')
                 
         self.time_stamp.append(time.time())
         return              
@@ -269,20 +266,17 @@ def main(opt):
     batchsize = args_dict['bs']
     video_num = args_dict['videos']
     
-    # the number of images processed by each worker
-    imgs = image_num * video_num 
-    
     # record all workers timestamp
-    m = Manager()
-    time_stamp = m.list()
+    time_stamp = Manager().list()
     
-    cmdQueues = [Queue()] * workers_num
+    c2wQueues = [Queue()] * workers_num
+    w2cQueues = [Queue()] * workers_num
     imgQueues = [Queue()] * workers_num
     
-    detectors = [Process(target=runWorker, args=(Worker(i, image_num, batchsize, detect, cmdQueue=cmdQueues[i],
-                                                        imgQueue=imgQueues[i],time_stamp=time_stamp),)) for i in range(workers_num)]
-    controller = Process(target=runController, args=(Controller(detector_num=workers_num, img_num=imgs,
-                                                                cmdQueues=cmdQueues, imgQueues=imgQueues),))
+    detectors = [Process(target=runWorker, args=(Worker(i, batchsize, detect, c2wQueue=c2wQueues[i], w2cQueue=w2cQueues[i],
+                                                        imgQueue=imgQueues[i], time_stamp=time_stamp),)) for i in range(workers_num)]
+    controller = Process(target=runController, args=(Controller(detector_num=workers_num, img_num=image_num*video_num, c2wQueues=c2wQueues,
+                                                                w2cQueues=w2cQueues, imgQueues=imgQueues),))
     
     for detector in detectors:
         detector.start()
