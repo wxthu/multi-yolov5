@@ -131,170 +131,91 @@ class Controller:
     作为Controller, 监视所有的detector
     """
     
-    def __init__(self, detector_num=2, img_num=50, all_queue=None):
+    def __init__(self, detector_num=1, img_num=100, cmdQueues=None, imgQueues=None):
         self.act_id = 0  # active task id
         self.detector_num = detector_num
         self.img_num = img_num
-        self.controller_state = {}  # 把所有detector的detector_state更新到自己的controller_state中
-        for i in range(self.detector_num):
-            self.controller_state.update({str(i): 'idle'})
-        self.all_queue = all_queue
+        self.cmdQueues = cmdQueues
+        self.imgQueues = imgQueues
+        self.exitSignal = 0  # when all workers finished job, exitSignal == detector_num
     
-    def update_state_table(self, state_dict):
-        """
-        从detector接收到的state_dict, 更新到self.controller_state中去
-        :param state_dict: 从detector接收到的detector_state
-        """
-        self.controller_state.update(state_dict)
+    def initQueues(self):
+        for i in range(self.img_num):
+            for q in self.imgQueues:
+                q.put(np.zeros(shape=(1920, 1080, 3)))
+                
+        self.cmdQueues[self.act_id].put('infer')
+        return
     
-    def init_msg(self):
-        init_state = {}
-        init_state.update({self.act_id: 'infer'})
-        init_state.update({'img': []})
-        return init_state
-    
-    def get_action(self):
+    def update_cmd_queue(self):
         """
         根据当前的self.controller_state, 对所有的detector进行控制
         """
-        new_state = {}
-        print('active w : {}'.format(self.act_id))
-        if self.controller_state[str(self.act_id)] == 'done':
-            self.controller_state[str(self.act_id)] = 'idle'
-            
-            if self.act_id + 1 == self.detector_num:
-                self.act_id = 0
-            else:
-                self.act_id += 1
-            self.controller_state.update({str(self.act_id): 'infer'})
-            new_state.update({str(self.act_id): 'infer'})
-            print('control state update -> worker {}'.format(self.act_id))
-            print('current cstate : {}'.format(self.controller_state))
-        return new_state
-    
-    def run(self):
-        for i in range(self.img_num):
-            for q in self.all_queue:
-                q.put(i)
-    
-    def run_backup(self):
-        """
-        UDP controller server. Accept msg from arbitrary address
-        """
-        server_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        server_socket.bind(('127.0.0.1', 8000))
-        client1_addr = ('127.0.0.1', 8001)  # activate one of client workers
-        client2_addr = ('127.0.0.1', 8002)
-        
-        send_msg = self.init_msg()
-        num = server_socket.sendto(encode_dict(send_msg), client1_addr)
-        num = server_socket.sendto(encode_dict(send_msg), client2_addr)
-        print('*** controller initial sending success {}***'.format(num))
-        print("initial ctrl state : {} ".format(self.controller_state))
-        interval = 1 / 500
-        img_count = 1  # we have sent one img in init_msg function
-        now = time.time()
-        while True:
-            # receive msg from arbitrary worker address
-            recv_msg, client_addr = server_socket.recvfrom(115200)
-            recv_msg = decode_dict(recv_msg)
-            print("controller recv : {}".format(recv_msg))
-            print("^^^ before update, ctrl state : {} ^^^".format(self.controller_state))
-            self.update_state_table(recv_msg)
-            print("^^^ update ctrl state : {} ^^^".format(self.controller_state))
-            send_msg = self.get_action()
-            print("&& after get_ac, ctrl state : {} &&".format(self.controller_state))
-            print("to send to worker : {}".format(send_msg))
-            
-            if time.time() - now >= interval:
-                if img_count < self.img_num:
-                    send_msg.update({'img': []})
-                    img_count += 1
+        # for i in range(detector_num):
+        print('***  check ctrl cmd queue size : {}:{}  ***'.format(self.act_id, self.cmdQueues[self.act_id].qsize()))
+        # time.sleep(10)
+        if self.cmdQueues[self.act_id].empty() is False:
+            cmd = self.cmdQueues[self.act_id].get()
+            print('worker {} current state : {}'.format(self.act_id, cmd))
+            if cmd == 'done':
+                if self.act_id + 1 == self.detector_num:
+                    self.act_id = 0
                 else:
-                    print("control signal exit, send {} images".format(img_count))
-                now = time.time()
-            # send back to current worker address
-            send_msg = encode_dict(send_msg)
-            server_socket.sendto(send_msg, client1_addr)
-            server_socket.sendto(send_msg, client2_addr)
+                    self.act_id += 1
+                
+                self.cmdQueues[self.act_id].put('infer')
+            if cmd == 'exit':
+                self.exitSignal += 1       
+        return
+
+    def run(self):
+        self.initQueues()
+        while True:
+            self.update_cmd_queue()
+            if self.exitSignal == self.detector_num:
+                print("all workers has finished jobs !")
+                break
+        return
+            
 
 class Worker:
-    """
-    单个detector
-    """
-    
-    def __init__(self, index, img_num, batchsize, engine: Detect, queue, time_stamp):
-        self.index = str(index)
-        self.id = index
+
+    def __init__(self, id, img_num, batchsize, engine: Detect, cmdQueue, imgQueue, time_stamp):
+        self.id = id
         self.img_num = img_num
         self.batchsize = batchsize
         self.engine = engine
-        self.detector_state = {}  # detector_state记录了当前单个detector的各种信息
-        self.detector_state.update({str(index): 'idle'})
-        self.q = queue
-        self.count = 0
+        self.cmdQueue = cmdQueue
+        self.imgQueue = imgQueue
         self.time_stamp = time_stamp
     
-    def update_state(self):
-        """
-        更新self.detector_state
-        """
-        self.detector_state.update({self.index: 'done'})
-        return
-    
     def run(self):
-        for i in range(self.img_num):
-            self.q.get()
-            if i == 0:
-                self.time_stamp.append(time.time())
-        
-        print('worker{} get {} images'.format(self.id, self.img_num))
-        
         self.time_stamp.append(time.time())
-    
-    def run_backup(self):
-        sk = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        sk.bind(('127.0.0.1', 8001+self.id))
-        # server_addr = ('127.0.0.1', 8000)  
-        finished = False
         while True:
-            print('detector', self.index, 'img queue len is', len(self.q))
-            recv_msg, server_addr = sk.recvfrom(115200)
-            recv_msg = decode_dict(recv_msg)
-            print('w{} receive : {}'.format(self.index, recv_msg))
+            if self.imgQueue.empty() is True:
+                print('all the images have been processed by worker {}'.format(self.id))
+                self.cmdQueue.put('exit')
+                break
             
-            if 'img' in recv_msg:
-                self.count += 1
-                print("begin to append img")
-                for _ in range(self.videos):
-                    self.q.append(np.zeros(shape=(1920, 1080, 3)))
-            else:
-                print('worker recieve all the images : {}'.format(self.count * self.videos))
-            
-            if self.index in recv_msg and recv_msg[self.index] == 'infer':
+            if self.cmdQueue.empty() is False and self.cmdQueue.get() == 'infer':
                 frames = []
                 for _ in range(self.batchsize):
-                    if len(self.q) > 0:
-                        frames.append(self.q.pop())
-                    else:
-                        print('all the images have been processed by worker {}'.format(self.index))
-                        finished = True
-                        break
-                if finished is True:
-                    break
+                    if self.imgQueue.qsize() > 0:
+                        frames.append(self.imgQueue.get())    
                 pred = self.engine.run(np.stack(frames))
-                self.update_state()
-                print('current state : {}'.format(self.detector_state))
                 
-            send_msg = encode_dict(self.detector_state)
-            sk.sendto(send_msg, server_addr)         
+                # send signal to controller
+                self.cmdQueue.put('done')
+                print("worker {} send inferring finished signal, queue size: {} ".format(self.id, self.cmdQueue.qsize()))
+                
+        self.time_stamp.append(time.time())
+        return              
 
-def detector_run(detector):
+def runWorker(detector):
     detector.run()
-    detector.run_backup()
 
-def controller_run(c):
-    c.run()
+def runController(controller):
+    controller.run()
 
 def parse_opt():
     parser = argparse.ArgumentParser()
@@ -327,7 +248,7 @@ def parse_opt():
     parser.add_argument('--bs', type=int, default=1, help='batch size of img')
     parser.add_argument('--img_num', type=int, default=50, help='the number of img sent by each client')
     parser.add_argument('--videos', type=int, default=8, help='the number of video stream')
-    parser.add_argument('--workers', type=int, default=2, help='the number of detector')
+    parser.add_argument('--workers', type=int, default=1, help='the number of detector')
     # parser.add_argument('--sequence', action='store_true', help='whether run 5s followed by 5x')
     opt = parser.parse_args()
     opt.imgsz *= 2 if len(opt.imgsz) == 1 else 1  # expand
@@ -346,27 +267,31 @@ def main(opt):
     workers_num = args_dict['workers']
     image_num = args_dict['img_num']
     batchsize = args_dict['bs']
+    video_num = args_dict['videos']
+    
+    # the number of images processed by each worker
+    imgs = image_num * video_num 
     
     # record all workers timestamp
     m = Manager()
     time_stamp = m.list()
     
-    Queue_list = [Queue()] * workers_num
+    cmdQueues = [Queue()] * workers_num
+    imgQueues = [Queue()] * workers_num
     
-    detectors = [Process(target=detector_run, args=(Worker(i, image_num, batchsize, detect, queue=Queue_list[i], time_stamp=time_stamp),)) for i in range(workers_num)]
-    controller = Process(target=controller_run, args=(Controller(detector_num=workers_num, img_num=image_num, all_queue=Queue_list),))
+    detectors = [Process(target=runWorker, args=(Worker(i, image_num, batchsize, detect, cmdQueue=cmdQueues[i],
+                                                        imgQueue=imgQueues[i],time_stamp=time_stamp),)) for i in range(workers_num)]
+    controller = Process(target=runController, args=(Controller(detector_num=workers_num, img_num=imgs,
+                                                                cmdQueues=cmdQueues, imgQueues=imgQueues),))
     
     for detector in detectors:
         detector.start()
-    time.sleep(8) # to wait child process init
     controller.start()
-    
 
     for detector in detectors:
         detector.join()
     controller.join()
     
- 
     duration = max(time_stamp) - min(time_stamp)
     print("***** The system end-to-end latency is : {:.3f}s *****".format(duration))
 
