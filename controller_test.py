@@ -9,7 +9,7 @@ class Controller:
     作为Controller, 监视所有的detector
     """
     
-    def __init__(self, detector_num=2, img_num=10):
+    def __init__(self, detector_num=2, img_num=50):
         self.act_id = 0  # active task id
         self.detector_num = detector_num
         self.img_num = img_num
@@ -63,7 +63,7 @@ class Controller:
         num = server_socket.sendto(encode_dict(send_msg), client2_addr)
         print('*** controller initial sending success {}***'.format(num))
         print("initial ctrl state : {} ".format(self.controller_state))
-        interval = 1/50
+        interval = 1/500
         img_count = 1  # we have sent one img in init_msg function 
         now = time.time()
         while True:
@@ -82,7 +82,8 @@ class Controller:
                 if img_count < self.img_num:
                     send_msg.update({'img' : []})
                     img_count += 1
-                
+                else:
+                    print("control signal exit, send {} images".format(img_count))
                 now = time.time()
             # send back to current worker address
             send_msg = encode_dict(send_msg)
