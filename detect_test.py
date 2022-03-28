@@ -139,6 +139,7 @@ class Worker:
         self.detector_state = {}  # detector_state记录了当前单个detector的各种信息
         self.detector_state.update({str(index): 'idle'})
         self.q = []
+        self.count = 0
     
     def update_state(self):
         """
@@ -159,9 +160,12 @@ class Worker:
             print('w{} receive : {}'.format(self.index, recv_msg))
             
             if 'img' in recv_msg:
+                self.count += 1
                 print("begin to append img")
                 for _ in range(self.videos):
                     self.q.append(np.zeros(shape=(1920, 1080, 3)))
+            else:
+                print('worker recieve all the images : {}'.format(self.count * self.videos))
             
             if self.index in recv_msg and recv_msg[self.index] == 'infer':
                 frames = []
@@ -176,9 +180,10 @@ class Worker:
                     break
                 pred = self.engine.run(np.stack(frames))
                 self.update_state()
+                print('current state : {}'.format(self.detector_state))
                 
             send_msg = encode_dict(self.detector_state)
-            sk.sendto(send_msg, server_addr)           
+            sk.sendto(send_msg, server_addr)         
 
 def detector_run(detector):
     detector.run()
@@ -213,8 +218,8 @@ def parse_opt():
     parser.add_argument('--half', action='store_true', help='use FP16 half-precision inference')
     parser.add_argument('--dnn', action='store_true', help='use OpenCV DNN for ONNX inference')
     parser.add_argument('--bs', type=int, default=1, help='batch size of img')
-    parser.add_argument('--img_num', type=int, default=25, help='the number of img sent by each client')
-    parser.add_argument('--videos', type=int, default=4, help='the number of video stream')
+    parser.add_argument('--img_num', type=int, default=50, help='the number of img sent by each client')
+    parser.add_argument('--videos', type=int, default=8, help='the number of video stream')
     parser.add_argument('--workers', type=int, default=2, help='the number of detector')
     # parser.add_argument('--sequence', action='store_true', help='whether run 5s followed by 5x')
     opt = parser.parse_args()
@@ -240,9 +245,12 @@ def main(opt):
     
     detectors = [Process(target=detector_run, args=(Worker(i, videos, batchsize, detect),)) for i in range(workers)]
     
-    start_time = time_sync()
+    
     for detector in detectors:
         detector.start()
+    time.sleep(8) # to wait child process init
+    
+    start_time = time_sync()
     # c = Controller()
     # c.run()
     for detector in detectors:
