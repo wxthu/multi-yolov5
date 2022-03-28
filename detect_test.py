@@ -56,7 +56,8 @@ from utils.general import (LOGGER, check_file, check_img_size, check_imshow, che
                            increment_path, non_max_suppression, print_args, scale_coords, strip_optimizer, xyxy2xywh)
 from utils.plots import Annotator, colors, save_one_box
 from utils.torch_utils import select_device, time_sync
-
+from multiprocessing import Queue
+from multiprocessing import Manager
 
 class Detect:
     def __init__(self, **kwargs):
@@ -125,21 +126,114 @@ class Detect:
         self.model.to('cpu')
 
 
+class Controller:
+    """
+    作为Controller, 监视所有的detector
+    """
+    
+    def __init__(self, detector_num=2, img_num=50, all_queue=None):
+        self.act_id = 0  # active task id
+        self.detector_num = detector_num
+        self.img_num = img_num
+        self.controller_state = {}  # 把所有detector的detector_state更新到自己的controller_state中
+        for i in range(self.detector_num):
+            self.controller_state.update({str(i): 'idle'})
+        self.all_queue = all_queue
+    
+    def update_state_table(self, state_dict):
+        """
+        从detector接收到的state_dict, 更新到self.controller_state中去
+        :param state_dict: 从detector接收到的detector_state
+        """
+        self.controller_state.update(state_dict)
+    
+    def init_msg(self):
+        init_state = {}
+        init_state.update({self.act_id: 'infer'})
+        init_state.update({'img': []})
+        return init_state
+    
+    def get_action(self):
+        """
+        根据当前的self.controller_state, 对所有的detector进行控制
+        """
+        new_state = {}
+        print('active w : {}'.format(self.act_id))
+        if self.controller_state[str(self.act_id)] == 'done':
+            self.controller_state[str(self.act_id)] = 'idle'
+            
+            if self.act_id + 1 == self.detector_num:
+                self.act_id = 0
+            else:
+                self.act_id += 1
+            self.controller_state.update({str(self.act_id): 'infer'})
+            new_state.update({str(self.act_id): 'infer'})
+            print('control state update -> worker {}'.format(self.act_id))
+            print('current cstate : {}'.format(self.controller_state))
+        return new_state
+    
+    def run(self):
+        for i in range(self.img_num):
+            for q in self.all_queue:
+                q.put(i)
+    
+    def run_backup(self):
+        """
+        UDP controller server. Accept msg from arbitrary address
+        """
+        server_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        server_socket.bind(('127.0.0.1', 8000))
+        client1_addr = ('127.0.0.1', 8001)  # activate one of client workers
+        client2_addr = ('127.0.0.1', 8002)
+        
+        send_msg = self.init_msg()
+        num = server_socket.sendto(encode_dict(send_msg), client1_addr)
+        num = server_socket.sendto(encode_dict(send_msg), client2_addr)
+        print('*** controller initial sending success {}***'.format(num))
+        print("initial ctrl state : {} ".format(self.controller_state))
+        interval = 1 / 500
+        img_count = 1  # we have sent one img in init_msg function
+        now = time.time()
+        while True:
+            # receive msg from arbitrary worker address
+            recv_msg, client_addr = server_socket.recvfrom(115200)
+            recv_msg = decode_dict(recv_msg)
+            print("controller recv : {}".format(recv_msg))
+            print("^^^ before update, ctrl state : {} ^^^".format(self.controller_state))
+            self.update_state_table(recv_msg)
+            print("^^^ update ctrl state : {} ^^^".format(self.controller_state))
+            send_msg = self.get_action()
+            print("&& after get_ac, ctrl state : {} &&".format(self.controller_state))
+            print("to send to worker : {}".format(send_msg))
+            
+            if time.time() - now >= interval:
+                if img_count < self.img_num:
+                    send_msg.update({'img': []})
+                    img_count += 1
+                else:
+                    print("control signal exit, send {} images".format(img_count))
+                now = time.time()
+            # send back to current worker address
+            send_msg = encode_dict(send_msg)
+            server_socket.sendto(send_msg, client1_addr)
+            server_socket.sendto(send_msg, client2_addr)
+
 class Worker:
     """
     单个detector
     """
     
-    def __init__(self, index, v_num, batchsize, engine: Detect):
+    def __init__(self, index, img_num, batchsize, engine: Detect, queue, time_stamp):
         self.index = str(index)
         self.id = index
-        self.videos = v_num
+        self.img_num = img_num
         self.batchsize = batchsize
         self.engine = engine
         self.detector_state = {}  # detector_state记录了当前单个detector的各种信息
         self.detector_state.update({str(index): 'idle'})
-        self.q = []
+        self.q = queue
         self.count = 0
+        self.time_stamp = time_stamp
     
     def update_state(self):
         """
@@ -149,6 +243,16 @@ class Worker:
         return
     
     def run(self):
+        for i in range(self.img_num):
+            self.q.get()
+            if i == 0:
+                self.time_stamp.append(time.time())
+        
+        print('worker{} get {} images'.format(self.id, self.img_num))
+        
+        self.time_stamp.append(time.time())
+    
+    def run_backup(self):
         sk = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         sk.bind(('127.0.0.1', 8001+self.id))
         # server_addr = ('127.0.0.1', 8000)  
@@ -187,7 +291,10 @@ class Worker:
 
 def detector_run(detector):
     detector.run()
+    detector.run_backup()
 
+def controller_run(c):
+    c.run()
 
 def parse_opt():
     parser = argparse.ArgumentParser()
@@ -232,34 +339,36 @@ def main(opt):
     check_requirements(exclude=('tensorboard', 'thop'))
     multiprocessing.set_start_method('spawn')
     
-    # 创建推理模型
+    # initialize detector
     args_dict = vars(opt)
     detect = Detect(**args_dict)
-    
-    videos = args_dict['videos']
-    # make sure to modify detector_num in Controller manually
-    # temp solution, to do in future
-    workers = args_dict['workers']
+
+    workers_num = args_dict['workers']
     image_num = args_dict['img_num']
     batchsize = args_dict['bs']
     
-    detectors = [Process(target=detector_run, args=(Worker(i, videos, batchsize, detect),)) for i in range(workers)]
+    # record all workers timestamp
+    m = Manager()
+    time_stamp = m.list()
     
+    Queue_list = [Queue()] * workers_num
+    
+    detectors = [Process(target=detector_run, args=(Worker(i, image_num, batchsize, detect, queue=Queue_list[i], time_stamp=time_stamp),)) for i in range(workers_num)]
+    controller = Process(target=controller_run, args=(Controller(detector_num=workers_num, img_num=image_num, all_queue=Queue_list),))
     
     for detector in detectors:
         detector.start()
     time.sleep(8) # to wait child process init
+    controller.start()
     
-    start_time = time_sync()
-    # c = Controller()
-    # c.run()
+
     for detector in detectors:
         detector.join()
+    controller.join()
     
-    duration = time_sync() - start_time
-    
+ 
+    duration = max(time_stamp) - min(time_stamp)
     print("***** The system end-to-end latency is : {:.3f}s *****".format(duration))
-    # print("***** The system throughput for {} detector(s) is : {:.2f} *****".format(server_num, throughput))
 
 
 if __name__ == "__main__":
