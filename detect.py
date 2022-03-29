@@ -59,7 +59,7 @@ from multiprocessing import Manager
 class Detect:
     def __init__(self, **kwargs):
         self.model = kwargs.get('weights', 'yolov5x.pt')
-        self.device = kwargs.get('device', 'cpu')
+        self.device = kwargs.get('device', None)
         self.imgsz = kwargs.get('imgsz', 640)
         self.dnn = kwargs.get('dnn', False)
         self.half = kwargs.get('half', False)
@@ -87,7 +87,7 @@ class Detect:
     
     @torch.no_grad()
     def run(self, image):
-        self.model.to('cuda')
+        # self.model.to('cuda')
         stride, pt, jit, onnx, engine = self.model.stride, self.model.pt, self.model.jit, self.model.onnx, self.model.engine
         self.imgsz = check_img_size(self.imgsz, s=stride)  # check image size
         # Half
@@ -107,7 +107,7 @@ class Detect:
         if len(im.shape) == 3:
             im = im[None]  # expand for batch dim
         
-        print('data shape is ', im.shape)
+        # print('data shape is ', im.shape)
         
         t2 = time_sync()
         dt.append(t2 - t1)
@@ -120,7 +120,7 @@ class Detect:
         # Print results
         t = tuple(x * 1E3 for x in dt)
         LOGGER.info(f'Speed: %.1fms pre-process, %.1fms inference' % t)
-        self.model.to('cpu')
+        # self.model.to('cpu')
 
 
 class Controller:
@@ -140,11 +140,11 @@ class Controller:
         self.exitSignal = 0  # when all workers finished job, exitSignal == detector_num
 
     def initQueues(self):
-        for q in self.imgQueues:
+        for q in range(len(self.imgQueues)):
             for i in range(self.img_num):
                 # Too large data will block process 
                 # q.put(np.zeros(shape=(1920, 1080, 3)))
-                q.put(i+1)   
+                self.imgQueues[q].put(i+1)
         self.c2wQueues[self.act_id].put('infer')
         return
     
@@ -160,14 +160,15 @@ class Controller:
                 
                 self.c2wQueues[self.act_id].put('infer')
             if cmd == 'exit':
-                self.exitSignal += 1       
+                self.exitSignal += 1
+                self.act_id += 1       
         return
 
     def run(self):
         self.initQueues()
         while True:
             self.update_cmd_queue()
-            if self.exitSignal == self.detector_num:
+            if self.exitSignal >= self.detector_num - 1:
                 print("all workers has finished jobs !")
                 break
         return
@@ -269,22 +270,25 @@ def main(opt):
     # record all workers timestamp
     time_stamp = Manager().list()
     
-    c2wQueues = [Queue()] * workers_num
-    w2cQueues = [Queue()] * workers_num
-    imgQueues = [Queue()] * workers_num
+    MAX_Q_NUM = 1000
+    
+    c2wQueues = [Queue(MAX_Q_NUM) for _ in range(workers_num)]
+    w2cQueues = [Queue(MAX_Q_NUM) for _ in range(workers_num)]
+    imgQueues = [Queue(MAX_Q_NUM) for _ in range(workers_num)]
     
     detectors = [Process(target=runWorker, args=(Worker(i, batchsize, detect, c2wQueue=c2wQueues[i], w2cQueue=w2cQueues[i],
                                                         imgQueue=imgQueues[i], time_stamp=time_stamp),)) for i in range(workers_num)]
     controller = Process(target=runController, args=(Controller(detector_num=workers_num, img_num=image_num*video_num, c2wQueues=c2wQueues,
                                                                 w2cQueues=w2cQueues, imgQueues=imgQueues),))
     
+    controller.start()
+    
     for detector in detectors:
         detector.start()
-    controller.start()
 
+    controller.join()
     for detector in detectors:
         detector.join()
-    controller.join()
     
     duration = max(time_stamp) - min(time_stamp)
     print("***** The system end-to-end latency is : {:.3f}s *****".format(duration))
