@@ -85,6 +85,7 @@ class Detect:
     
     @torch.no_grad()
     def run(self, image):
+        os.environ["CUDA_VISIBLE_DEVICES"] = "0"
         self.model.to('cuda')
         stride, pt, jit, onnx, engine = self.model.stride, self.model.pt, self.model.jit, self.model.onnx, self.model.engine
         self.imgsz = check_img_size(self.imgsz, s=stride)  # check image size
@@ -105,8 +106,7 @@ class Detect:
         if len(im.shape) == 3:
             im = im[None]  # expand for batch dim
         
-        # print('data shape is ', im.shape)
-        
+        print('data shape is ', im.shape)  
         t2 = time_sync()
         dt.append(t2 - t1)
         
