@@ -39,7 +39,6 @@ import cv2
 import torch
 import torch.backends.cudnn as cudnn
 from utils.augmentations import letterbox, batch_letterbox
-from encode_decode import encode_dict, decode_dict
 
 FILE = Path(__file__).resolve()
 ROOT = FILE.parents[0]  # YOLOv5 root directory
@@ -59,19 +58,18 @@ from multiprocessing import Manager
 class Detect:
     def __init__(self, **kwargs):
         self.model = kwargs.get('weights', 'yolov5x.pt')
-        self.device = kwargs.get('device', None)
+        self.device = kwargs.get('device', 'cpu')
         self.imgsz = kwargs.get('imgsz', 640)
         self.dnn = kwargs.get('dnn', False)
         self.half = kwargs.get('half', False)
         self.augment = kwargs.get('augment', False)
         self.visualize = kwargs.get('visualize', False)
         self.sequence = kwargs.get('sequence', False)
-        
         # Load model
         self.device = select_device(self.device)
         self.model = DetectMultiBackend(self.model, device=self.device, dnn=self.dnn)
         self.model.eval()
-    
+
     def convertImage(self, image, stride=32, auto=True):
         
         assert image is not None, f'Image Not Found'
@@ -149,7 +147,6 @@ class Controller:
         return
     
     def update_cmd_queue(self):
-        # for i in range(detector_num):
         if self.w2cQueues[self.act_id].empty() is False:
             cmd = self.w2cQueues[self.act_id].get()
             if cmd == 'done':
@@ -168,7 +165,7 @@ class Controller:
         self.initQueues()
         while True:
             self.update_cmd_queue()
-            if self.exitSignal >= self.detector_num - 1:
+            if self.exitSignal >= self.detector_num:
                 print("all workers has finished jobs !")
                 break
         return
@@ -176,10 +173,11 @@ class Controller:
 
 class Worker:
 
-    def __init__(self, id, batchsize, engine, c2wQueue, w2cQueue, imgQueue, time_stamp):
+    def __init__(self, id, batchsize, c2wQueue, w2cQueue, imgQueue, time_stamp, opt):
         self.id = id
         self.batchsize = batchsize
-        self.engine = engine
+        opt = vars(opt)
+        self.engine = Detect(**opt)
         self.c2wQueue = c2wQueue
         self.w2cQueue = w2cQueue
         self.imgQueue = imgQueue
@@ -188,9 +186,12 @@ class Worker:
     
     def run(self):
         self.time_stamp.append(time.time())
+        # set a flag to avoid the case where controller hasn't put img into imgQueue
+        hasInfered = False  
         while True:
             
             if self.c2wQueue.empty() is False and self.c2wQueue.get() == 'infer':
+                hasInfered = True
                 frames = []
                 for _ in range(self.batchsize):
                     if self.imgQueue.qsize() > 0:
@@ -198,10 +199,9 @@ class Worker:
                         frames.append(np.zeros(shape=(1920, 1080, 3)))    
                 if len(frames) > 0:
                     pred = self.engine.run(np.stack(frames))
-                
                     # send signal to controller
                     self.w2cQueue.put('done')
-            if self.imgQueue.empty() is True:
+            if self.imgQueue.empty() and hasInfered:
                 print('all {} images have been processed by worker {}'.format(self.imgs, self.id))
                 self.w2cQueue.put('exit')
                 break
@@ -209,10 +209,31 @@ class Worker:
         self.time_stamp.append(time.time())
         return              
 
-def runWorker(detector):
-    detector.run()
+def runWorker(i,
+            batchsize, 
+            c2wQueue,
+            w2cQueue,
+            imgQueue, 
+            time_stamp,
+            opt):
+    worker = Worker(i,
+                    batchsize, 
+                    c2wQueue=c2wQueue,
+                    w2cQueue=w2cQueue,
+                    imgQueue=imgQueue, 
+                    time_stamp=time_stamp,
+                    opt=opt
+                    )
+    worker.run()
 
-def runController(controller):
+def runController(workers_num, 
+                  image_num,
+                  video_num,
+                  c2wQueues,
+                  w2cQueues, 
+                  imgQueues):
+    controller = Controller(detector_num=workers_num, img_num=image_num*video_num, c2wQueues=c2wQueues,
+                                                                w2cQueues=w2cQueues, imgQueues=imgQueues)
     controller.run()
 
 def parse_opt():
@@ -256,11 +277,10 @@ def parse_opt():
 
 def main(opt):
     check_requirements(exclude=('tensorboard', 'thop'))
-    multiprocessing.set_start_method('spawn')
+    # multiprocessing.set_start_method('spawn')
     
-    # initialize detector
+    # move params into child process to reduce gpu memory
     args_dict = vars(opt)
-    detect = Detect(**args_dict)
 
     workers_num = args_dict['workers']
     image_num = args_dict['img_num']
@@ -269,18 +289,36 @@ def main(opt):
     
     # record all workers timestamp
     time_stamp = Manager().list()
-    
     MAX_Q_NUM = 1000
     
     c2wQueues = [Queue(MAX_Q_NUM) for _ in range(workers_num)]
     w2cQueues = [Queue(MAX_Q_NUM) for _ in range(workers_num)]
     imgQueues = [Queue(MAX_Q_NUM) for _ in range(workers_num)]
     
-    detectors = [Process(target=runWorker, args=(Worker(i, batchsize, detect, c2wQueue=c2wQueues[i], w2cQueue=w2cQueues[i],
-                                                        imgQueue=imgQueues[i], time_stamp=time_stamp),)) for i in range(workers_num)]
-    controller = Process(target=runController, args=(Controller(detector_num=workers_num, img_num=image_num*video_num, c2wQueues=c2wQueues,
-                                                                w2cQueues=w2cQueues, imgQueues=imgQueues),))
+    controller = Process(target=runController, args=(workers_num, 
+                                                     image_num,
+                                                     video_num,
+                                                     c2wQueues,
+                                                     w2cQueues,
+                                                     imgQueues,
+                                                     )
+                         )
     
+    detectors = [
+                Process(target=runWorker, 
+                        args=(i,
+                                batchsize,
+                                c2wQueues[i],
+                                w2cQueues[i],
+                                imgQueues[i], 
+                                time_stamp,
+                                opt
+                            )
+                        )
+                            
+                for i in range(workers_num)
+                ]
+
     controller.start()
     
     for detector in detectors:
