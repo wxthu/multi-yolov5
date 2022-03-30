@@ -17,7 +17,7 @@ Usage - formats:
                                          yolov5s.onnx               # ONNX Runtime or OpenCV DNN with --dnn
                                          yolov5s.xml                # OpenVINO
                                          yolov5s.engine             # TensorRT
-                                         yolov5s.mlmodel            # CoreML (macOS-only)
+                                         yolov5s.mlmodel            # CoreML (MacOS-only)
                                          yolov5s_saved_model        # TensorFlow SavedModel
                                          yolov5s.pb                 # TensorFlow GraphDef
                                          yolov5s.tflite             # TensorFlow Lite
@@ -37,6 +37,7 @@ import time
 
 import cv2
 import torch
+# torch.cuda.set_per_process_memory_fraction(0.25, 0)
 import torch.backends.cudnn as cudnn
 from utils.augmentations import letterbox, batch_letterbox
 
@@ -48,7 +49,7 @@ ROOT = Path(os.path.relpath(ROOT, Path.cwd()))  # relative
 
 from models.common import DetectMultiBackend
 from utils.datasets import IMG_FORMATS, VID_FORMATS, LoadImages, LoadStreams
-from utils.general import (LOGGER, check_file, check_img_size, check_imshow, check_requirements, colorstr, cv2,
+from utils.general import (LOGGER, check_file, check_img_size, check_imshow, check_requirements, colorstr,
                            increment_path, non_max_suppression, print_args, scale_coords, strip_optimizer, xyxy2xywh)
 from utils.plots import Annotator, colors, save_one_box
 from utils.torch_utils import select_device, time_sync
@@ -273,7 +274,7 @@ def parse_opt():
     # parser.add_argument('--sequence', action='store_true', help='whether run 5s followed by 5x')
     opt = parser.parse_args()
     opt.imgsz *= 2 if len(opt.imgsz) == 1 else 1  # expand
-    print_args(vars(opt))
+    print_args(FILE.stem, opt)
     return opt
 
 
