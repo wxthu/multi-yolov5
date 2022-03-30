@@ -85,7 +85,7 @@ class Detect:
     
     @torch.no_grad()
     def run(self, image):
-        # self.model.to('cuda')
+        self.model.to('cuda')
         stride, pt, jit, onnx, engine = self.model.stride, self.model.pt, self.model.jit, self.model.onnx, self.model.engine
         self.imgsz = check_img_size(self.imgsz, s=stride)  # check image size
         # Half
@@ -118,7 +118,7 @@ class Detect:
         # Print results
         t = tuple(x * 1E3 for x in dt)
         LOGGER.info(f'Speed: %.1fms pre-process, %.1fms inference' % t)
-        # self.model.to('cpu')
+        self.model.to('cpu')
 
 
 class Controller:
@@ -245,7 +245,7 @@ def parse_opt():
     parser.add_argument('--conf-thres', type=float, default=0.25, help='confidence threshold')
     parser.add_argument('--iou-thres', type=float, default=0.45, help='NMS IoU threshold')
     parser.add_argument('--max-det', type=int, default=1000, help='maximum detections per image')
-    parser.add_argument('--device', default='', help='cuda device, i.e. 0 or 0,1,2,3 or cpu')
+    parser.add_argument('--device', default='cpu', help='cuda device, i.e. 0 or 0,1,2,3 or cpu')
     parser.add_argument('--view-img', action='store_true', help='show results')
     parser.add_argument('--save-txt', action='store_true', help='save results to *.txt')
     parser.add_argument('--save-conf', action='store_true', help='save confidences in --save-txt labels')
@@ -266,7 +266,7 @@ def parse_opt():
     parser.add_argument('--dnn', action='store_true', help='use OpenCV DNN for ONNX inference')
     parser.add_argument('--bs', type=int, default=1, help='batch size of img')
     parser.add_argument('--img_num', type=int, default=50, help='the number of img sent by each client')
-    parser.add_argument('--videos', type=int, default=8, help='the number of video stream')
+    parser.add_argument('--videos', type=int, default=4, help='the number of video stream')
     parser.add_argument('--workers', type=int, default=1, help='the number of detector')
     # parser.add_argument('--sequence', action='store_true', help='whether run 5s followed by 5x')
     opt = parser.parse_args()
