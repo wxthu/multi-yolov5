@@ -100,7 +100,8 @@ class Detect:
         # Run inference
         dt = []
         t1 = time_sync()
-        im = torch.from_numpy(img).to(self.device)
+        # im = torch.from_numpy(img).to(self.device)
+        im = torch.from_numpy(img).to('cuda')
         im = im.half() if half else im.float()  # uint8 to fp16/32
         im /= 255  # 0 - 255 to 0.0 - 1.0
         if len(im.shape) == 3:
@@ -119,6 +120,7 @@ class Detect:
         t = tuple(x * 1E3 for x in dt)
         LOGGER.info(f'Speed: %.1fms pre-process, %.1fms inference' % t)
         self.model.to('cpu')
+        torch.cuda.empty_cache()
 
 
 class Controller:
