@@ -82,11 +82,18 @@ class Detect:
         img = np.ascontiguousarray(img)
         
         return img
-    
+    def load_model(self):
+        self.device = 'cuda'
+        os.environ["CUDA_VISIBLE_DEVICES"] = "0"
+        self.model.to(self.device)
+
+    def release_model(self):
+        self.device = 'cpu'
+        self.model.to(self.device)
+        torch.cuda.empty_cache()
+
     @torch.no_grad()
     def run(self, image):
-        # os.environ["CUDA_VISIBLE_DEVICES"] = "0"
-        # self.model.to('cuda')
         stride, pt, jit, onnx, engine = self.model.stride, self.model.pt, self.model.jit, self.model.onnx, self.model.engine
         self.imgsz = check_img_size(self.imgsz, s=stride)  # check image size
         # Half
@@ -118,7 +125,6 @@ class Detect:
         # Print results
         t = tuple(x * 1E3 for x in dt)
         LOGGER.info(f'Speed: %.1fms pre-process, %.1fms inference' % t)
-        # self.model.to('cpu')
 
 
 class Controller:
@@ -143,6 +149,8 @@ class Controller:
                 # Too large data will block process 
                 # q.put(np.zeros(shape=(1920, 1080, 3)))
                 self.imgQueues[q].put(i+1)
+        # To notify worker to load model into GPU memory
+        self.c2wQueues[self.act_id].put('begin')
         self.c2wQueues[self.act_id].put('infer')
         return
     
@@ -154,7 +162,8 @@ class Controller:
                     self.act_id = 0
                 else:
                     self.act_id += 1
-                
+
+                self.c2wQueues[self.act_id].put('begin')
                 self.c2wQueues[self.act_id].put('infer')
             if cmd == 'exit':
                 self.exitSignal += 1
@@ -186,6 +195,11 @@ class Worker:
     
     def run(self):
         self.time_stamp.append(time.time())
+        while True:
+            if self.c2wQueue.empty() is False and self.c2wQueue.get() == 'begin':
+                self.engine.load_model()
+                break
+
         # set a flag to avoid the case where controller hasn't put img into imgQueue
         hasInfered = False  
         while True:
@@ -205,6 +219,9 @@ class Worker:
                 # send signal to controller
                 self.w2cQueue.put('done')
                 print('all {} images have been processed by worker {}'.format(self.imgs, self.id))
+
+                # release gpu memory
+                self.engine.release_model()
                 self.w2cQueue.put('exit')
                 break
                 
