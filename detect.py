@@ -86,7 +86,7 @@ class Detect:
     @torch.no_grad()
     def run(self, image):
         os.environ["CUDA_VISIBLE_DEVICES"] = "0"
-        self.model.to('cuda')
+        # self.model.to('cuda')
         stride, pt, jit, onnx, engine = self.model.stride, self.model.pt, self.model.jit, self.model.onnx, self.model.engine
         self.imgsz = check_img_size(self.imgsz, s=stride)  # check image size
         # Half
@@ -119,7 +119,7 @@ class Detect:
         # Print results
         t = tuple(x * 1E3 for x in dt)
         LOGGER.info(f'Speed: %.1fms pre-process, %.1fms inference' % t)
-        self.model.to('cpu')
+        # self.model.to('cpu')
         torch.cuda.empty_cache()
 
 
@@ -145,7 +145,8 @@ class Controller:
                 # Too large data will block process 
                 # q.put(np.zeros(shape=(1920, 1080, 3)))
                 self.imgQueues[q].put(i+1)
-        self.c2wQueues[self.act_id].put('infer')
+            self.c2wQueues[q].put('infer')
+        # self.c2wQueues[self.act_id].put('infer')
         return
     
     def update_cmd_queue(self):
@@ -165,12 +166,12 @@ class Controller:
 
     def run(self):
         self.initQueues()
-        while True:
-            self.update_cmd_queue()
-            if self.exitSignal >= self.detector_num:
-                print("all workers has finished jobs !")
-                break
-        return
+        # while True:
+        #     self.update_cmd_queue()
+        #     if self.exitSignal >= self.detector_num:
+        #         print("all workers has finished jobs !")
+        #         break
+        # return
             
 
 class Worker:
@@ -192,7 +193,7 @@ class Worker:
         hasInfered = False  
         while True:
             
-            if self.c2wQueue.empty() is False and self.c2wQueue.get() == 'infer':
+            if self.c2wQueue.empty() is False:
                 hasInfered = True
                 frames = []
                 for _ in range(self.batchsize):
@@ -202,7 +203,7 @@ class Worker:
                 if len(frames) > 0:
                     pred = self.engine.run(np.stack(frames))
                     # send signal to controller
-                    self.w2cQueue.put('done')
+                    # self.w2cQueue.put('done')
             if self.imgQueue.empty() and hasInfered:
                 print('all {} images have been processed by worker {}'.format(self.imgs, self.id))
                 self.w2cQueue.put('exit')
@@ -247,7 +248,7 @@ def parse_opt():
     parser.add_argument('--conf-thres', type=float, default=0.25, help='confidence threshold')
     parser.add_argument('--iou-thres', type=float, default=0.45, help='NMS IoU threshold')
     parser.add_argument('--max-det', type=int, default=1000, help='maximum detections per image')
-    parser.add_argument('--device', default='cpu', help='cuda device, i.e. 0 or 0,1,2,3 or cpu')
+    parser.add_argument('--device', default='', help='cuda device, i.e. 0 or 0,1,2,3 or cpu')
     parser.add_argument('--view-img', action='store_true', help='show results')
     parser.add_argument('--save-txt', action='store_true', help='save results to *.txt')
     parser.add_argument('--save-conf', action='store_true', help='save confidences in --save-txt labels')
