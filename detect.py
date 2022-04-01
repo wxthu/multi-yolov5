@@ -84,7 +84,7 @@ class Detect:
         return img
     
     @torch.no_grad()
-    def run(self, image):
+    def run(self, w_id, image):
         os.environ["CUDA_VISIBLE_DEVICES"] = "0"
         self.model.to('cuda')
         stride, pt, jit, onnx, engine = self.model.stride, self.model.pt, self.model.jit, self.model.onnx, self.model.engine
@@ -118,7 +118,7 @@ class Detect:
         
         # Print results
         t = tuple(x * 1E3 for x in dt)
-        LOGGER.info(f'Speed: %.1fms pre-process, %.1fms inference' % t)
+        LOGGER.info(f'Speed: %.1fms pre-process, %.1fms inference, worker id: %d' % (t + (w_id,)))
         self.model.to('cpu')
         torch.cuda.empty_cache()
 
@@ -200,7 +200,7 @@ class Worker:
                         self.imgs = self.imgQueue.get()
                         frames.append(np.zeros(shape=(1920, 1080, 3)))    
                 if len(frames) > 0:
-                    pred = self.engine.run(np.stack(frames))
+                    pred = self.engine.run(self.id, np.stack(frames))
                     # send signal to controller
                     self.w2cQueue.put('done')
             if self.imgQueue.empty() and hasInfered:
