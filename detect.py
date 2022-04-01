@@ -186,6 +186,9 @@ class Worker:
         self.imgQueue = imgQueue
         self.time_stamp = time_stamp
         self.imgs = 0
+
+        # specialized case for two workers, 4 streams
+        self.batchsize = 1 if self.id == 0 else 3
     
     def run(self):
         self.time_stamp.append(time.time())
