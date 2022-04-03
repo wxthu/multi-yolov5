@@ -158,7 +158,7 @@ def run(weights=ROOT / 'yolov5s.pt',  # model.pt path(s)
     thread1.join()
     thread2.join()
     duration = (time_sync() - t1) * 1E3
-    # Print results
+    
     LOGGER.info(f'Overall end-to-end latency of processing video : %.1fms' % duration)
    
 
