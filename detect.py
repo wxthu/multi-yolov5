@@ -93,7 +93,7 @@ class Detect:
         torch.cuda.empty_cache()
 
     @torch.no_grad()
-    def run(self, image):
+    def run(self, w_id, image):
         stride, pt, jit, onnx, engine = self.model.stride, self.model.pt, self.model.jit, self.model.onnx, self.model.engine
         self.imgsz = check_img_size(self.imgsz, s=stride)  # check image size
         # Half
@@ -124,18 +124,21 @@ class Detect:
         
         # Print results
         t = tuple(x * 1E3 for x in dt)
-        LOGGER.info(f'Speed: %.1fms pre-process, %.1fms inference' % t)
+        LOGGER.info(f'Speed: %.1fms pre-process, %.1fms inference, worker id :%d' % (t + (w_id,)))
 
 
 class Controller:
     """
     作为Controller, 监视所有的Worker
     """
-    def __init__(self, detector_num=1, img_num=100, c2wQueues=None, w2cQueues=None, imgQueues=None):
+    def __init__(self, detector_num=3, img_num=200, c2wQueues=None, w2cQueues=None, imgQueues=None):
         """ 
         two-way communiaction to prevent message contention
         """
-        self.act_id = 0  # active task id
+        # current device only can accomodate two 5x models
+        self.capacity = 2
+        self.act_ids = [0, 1] 
+        self.wait_ids = []   # consider list as queue
         self.detector_num = detector_num
         self.img_num = img_num
         self.c2wQueues = c2wQueues
@@ -143,31 +146,51 @@ class Controller:
         self.imgQueues = imgQueues
         self.exitSignal = 0  # when all workers finished job, exitSignal == detector_num
 
+        for i in range(detector_num - 2):
+            self.wait_ids.append(i+2)
+
     def initQueues(self):
         for q in range(len(self.imgQueues)):
             for i in range(self.img_num):
                 # Too large data will block process 
                 # q.put(np.zeros(shape=(1920, 1080, 3)))
                 self.imgQueues[q].put(i+1)
-        # To notify worker to load model into GPU memory
-        self.c2wQueues[self.act_id].put('begin')
-        self.c2wQueues[self.act_id].put('infer')
-        return
-    
-    def update_cmd_queue(self):
-        if self.w2cQueues[self.act_id].empty() is False:
-            cmd = self.w2cQueues[self.act_id].get()
-            if cmd == 'done':
-                if self.act_id + 1 == self.detector_num:
-                    self.act_id = 0
-                else:
-                    self.act_id += 1
 
-                self.c2wQueues[self.act_id].put('begin')
-                self.c2wQueues[self.act_id].put('infer')
-            if cmd == 'exit':
-                self.exitSignal += 1
-                self.act_id += 1       
+        # To notify worker to load model into GPU memory
+        for i in range(len(self.act_ids)):
+            self.c2wQueues[self.act_ids[i]].put('begin')
+            self.c2wQueues[self.act_ids[i]].put('infer')
+        return
+
+    def popWorkers(self, lists):
+        for e in lists:
+            ind = self.act_ids.index(e)
+            self.act_ids.pop(ind)
+
+    def update_cmd_queue(self):
+        popLists = []
+        for j in range(len(self.act_ids)):
+            if self.w2cQueues[self.act_ids[j]].empty() is False:
+                cmd = self.w2cQueues[self.act_ids[j]].get()
+                if cmd == 'batch_done':
+                    self.wait_ids.append(self.act_ids[j])  # add into the tail
+
+                if cmd == 'finish':
+                    self.exitSignal += 1
+
+                popLists.append(self.act_ids[j])
+
+        self.popWorkers(popLists)
+        while len(self.act_ids) < self.capacity:
+            print("To add more workers into active pool...")
+            if len(self.wait_ids) > 0:
+                new_id = self.wait_ids.pop(0)   # get new workers from head of queue
+                self.c2wQueues[new_id].put('begin')
+                self.c2wQueues[new_id].put('infer')  
+                self.act_ids.append(new_id)
+            else:
+                break
+
         return
 
     def run(self):
@@ -195,15 +218,15 @@ class Worker:
     
     def run(self):
         self.time_stamp.append(time.time())
-        while True:
-            if self.c2wQueue.empty() is False and self.c2wQueue.get() == 'begin':
-                self.engine.load_model()
-                break
 
         # set a flag to avoid the case where controller hasn't put img into imgQueue
         hasInfered = False  
         while True:
-            
+            while True:
+                if self.c2wQueue.empty() is False and self.c2wQueue.get() == 'begin':
+                    self.engine.load_model()
+                    break
+
             if self.c2wQueue.empty() is False and self.c2wQueue.get() == 'infer':
                 hasInfered = True
                 while self.imgQueue.empty() is False:
@@ -213,16 +236,17 @@ class Worker:
                             self.imgs = self.imgQueue.get()
                             frames.append(np.zeros(shape=(1920, 1080, 3)))    
                     if len(frames) > 0:
-                        pred = self.engine.run(np.stack(frames))
+                        pred = self.engine.run(self.id, np.stack(frames))
+                        # send signal to controller
+                        self.w2cQueue.put('batch_done')
+                        self.engine.release_model()
+                        break
                         
             if self.imgQueue.empty() and hasInfered:
-                # send signal to controller
-                self.w2cQueue.put('done')
                 print('all {} images have been processed by worker {}'.format(self.imgs, self.id))
-
                 # release gpu memory
                 self.engine.release_model()
-                self.w2cQueue.put('exit')
+                self.w2cQueue.put('finish')
                 break
                 
         self.time_stamp.append(time.time())
@@ -257,7 +281,7 @@ def runController(workers_num,
 
 def parse_opt():
     parser = argparse.ArgumentParser()
-    parser.add_argument('--weights', nargs='+', type=str, default=ROOT / 'yolov5s.pt', help='model path(s)')
+    parser.add_argument('--weights', nargs='+', type=str, default=ROOT / 'yolov5x.pt', help='model path(s)')
     parser.add_argument('--source', type=str, default=ROOT / 'data/images', help='file/dir/URL/glob, 0 for webcam')
     parser.add_argument('--data', type=str, default=ROOT / 'data/coco128.yaml', help='(optional) dataset.yaml path')
     parser.add_argument('--imgsz', '--img', '--img-size', nargs='+', type=int, default=[640], help='inference size h,w')
@@ -286,7 +310,7 @@ def parse_opt():
     parser.add_argument('--bs', type=int, default=1, help='batch size of img')
     parser.add_argument('--img_num', type=int, default=50, help='the number of img sent by each client')
     parser.add_argument('--videos', type=int, default=4, help='the number of video stream')
-    parser.add_argument('--workers', type=int, default=1, help='the number of detector')
+    parser.add_argument('--workers', type=int, default=3, help='the number of detector')
     # parser.add_argument('--sequence', action='store_true', help='whether run 5s followed by 5x')
     opt = parser.parse_args()
     opt.imgsz *= 2 if len(opt.imgsz) == 1 else 1  # expand
