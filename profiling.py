@@ -1,17 +1,12 @@
 import torch
-import torch.nn as nn
-import torch.nn.functional as F
-import torch.onnx
-from torch.onnx.utils import export
-import collections
 from torchvision.models.resnet import resnet18, resnet34, resnet50, resnet101, resnet152
 from torchvision.models import alexnet, vgg16, vgg13, vgg11, squeezenet1_0, squeezenet1_1
-
-import numpy as np
-import pandas as pd
-import csv
+from models.common import DetectMultiBackend
 
 import time
+
+def count_parameters(model):
+    return sum(p.numel() for p in model.parameters() if p.requires_grad)
 
 def time_sync():
     if torch.cuda.is_available():
@@ -21,12 +16,12 @@ def time_sync():
 
 
 if __name__ == '__main__':
-
-    # warm = resnet18(pretrained=True).eval().cuda()
+    yolov5x = DetectMultiBackend('yolov5x.pt', device=torch.device('cpu'))
+    yolov5s = DetectMultiBackend('yolov5s.pt', device=torch.device('cpu'))
     warm = resnet50().eval().cuda()
     rdm_input = torch.randn(1, 3, 384, 640).to('cuda')
     t1 = time_sync()
-    for _ in range(2000):
+    for _ in range(500):
         y = warm(rdm_input)
     duration = time_sync() - t1
     print(f'*** warm up finished, duration : {1000 * duration / 2000}ms ***')
@@ -47,6 +42,8 @@ if __name__ == '__main__':
     models.update({'vgg11': vgg11().eval()})
     models.update({'vgg13': vgg13().eval()})
     models.update({'vgg16': vgg16().eval()})
+    models.update({'yolov5x': yolov5x.eval()})
+    models.update({'yolov5s': yolov5s.eval()})
 
     for name, model in models.items():
         for i in range(NUM):
@@ -60,9 +57,11 @@ if __name__ == '__main__':
             loading[i] = 1000 * (t2 - t1)
             inference[i] = 1000 * (t3 - t2)
             unloading[i] = 1000 * (t4 - t3)
+            torch.cuda.empty_cache()
+            # print(f'single round: loading {loading[i]}ms, infer {inference[i]}ms, unloading {unloading[i]}ms')
 
         print(f'{name} loading avg {sum(loading) / NUM}ms, infer avg {sum(inference) / NUM}ms, unloading avg : {sum(unloading) / NUM}ms')
-
+        
 
     
     

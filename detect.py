@@ -98,7 +98,7 @@ class Detect:
         self.imgsz = check_img_size(self.imgsz, s=stride)  # check image size
         # Half
         half = self.half & (
-                    pt or jit or onnx or engine) and self.device.type != 'cpu'  # FP16 supported on limited backends with CUDA
+                    pt or jit or onnx or engine) and self.device != 'cpu'  # FP16 supported on limited backends with CUDA
         if pt or jit:
             self.model.model.half() if half else self.model.model.float()
         # crop img to specific size
