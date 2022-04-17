@@ -182,15 +182,17 @@ class Controller:
 
         self.popWorkers(popLists)
         while len(self.act_ids) < self.capacity:
-            print("To add more workers into active pool...")
             if len(self.wait_ids) > 0:
                 new_id = self.wait_ids.pop(0)   # get new workers from head of queue
                 self.c2wQueues[new_id].put('begin')
                 self.c2wQueues[new_id].put('infer')  
                 self.act_ids.append(new_id)
+                print(f'add new worker {new_id} success !!!')
             else:
+                print(f'no workers waiting for task...')
                 break
-
+            
+            print('GPU memory cannot hold more models temporarily ...')
         return
 
     def run(self):
