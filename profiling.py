@@ -4,6 +4,7 @@ from torchvision.models import alexnet, vgg16, vgg13, vgg11, squeezenet1_0, sque
 from models.common import DetectMultiBackend
 
 import time
+from tqdm import tqdm
 
 def count_parameters(model):
     return sum(p.numel() for p in model.parameters() if p.requires_grad)
@@ -21,11 +22,11 @@ if __name__ == '__main__':
     warm = resnet50().eval().cuda()
     rdm_input = torch.randn(1, 3, 384, 640).to('cuda')
     t1 = time_sync()
-    for _ in range(500):
+    for _ in range(50):
         y = warm(rdm_input)
     duration = time_sync() - t1
     print(f'*** warm up finished, duration : {1000 * duration / 2000}ms ***')
-    NUM = 3000
+    NUM = 500
     loading = [0 for _ in range(NUM)]
     inference = [0 for _ in range(NUM)]
     unloading = [0 for _ in range(NUM)]
@@ -46,7 +47,7 @@ if __name__ == '__main__':
     models.update({'yolov5s': yolov5s.eval()})
 
     for name, model in models.items():
-        for i in range(NUM):
+        for i in tqdm(range(NUM)):
             t1 = time_sync()
             model.to('cuda')
             t2 = time_sync()
@@ -57,7 +58,7 @@ if __name__ == '__main__':
             loading[i] = 1000 * (t2 - t1)
             inference[i] = 1000 * (t3 - t2)
             unloading[i] = 1000 * (t4 - t3)
-            torch.cuda.empty_cache()
+            # torch.cuda.empty_cache()
             # print(f'single round: loading {loading[i]}ms, infer {inference[i]}ms, unloading {unloading[i]}ms')
 
         print(f'{name} loading avg {sum(loading) / NUM}ms, infer avg {sum(inference) / NUM}ms, unloading avg : {sum(unloading) / NUM}ms')
