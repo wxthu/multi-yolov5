@@ -192,7 +192,7 @@ class Controller:
                 print(f'no workers waiting for task...')
                 break
             
-            print('GPU memory cannot hold more models temporarily ...')
+        # print('GPU memory cannot hold more models temporarily ...')
         return
 
     def run(self):
@@ -217,20 +217,19 @@ class Worker:
         self.imgQueue = imgQueue
         self.time_stamp = time_stamp
         self.imgs = 0
+        self.hasInfered = False # Set a flag to avoid the case where controller hasn't put img into imgQueue
+        self.loaded = False     # To indicate whether model has loaded into GPU
     
     def run(self):
         self.time_stamp.append(time.time())
 
-        # set a flag to avoid the case where controller hasn't put img into imgQueue
-        hasInfered = False  
         while True:
-            while True:
-                if self.c2wQueue.empty() is False and self.c2wQueue.get() == 'begin':
-                    self.engine.load_model()
-                    break
-
-            if self.c2wQueue.empty() is False and self.c2wQueue.get() == 'infer':
-                hasInfered = True
+            if self.c2wQueue.empty() is False and self.c2wQueue.get() == 'begin':
+                self.engine.load_model()
+                self.loaded = True
+                    
+            if self.loaded and self.c2wQueue.empty() is False and self.c2wQueue.get() == 'infer':
+                self.hasInfered = True
                 while self.imgQueue.empty() is False:
                     frames = []
                     for _ in range(self.batchsize):
@@ -242,9 +241,10 @@ class Worker:
                         # send signal to controller
                         self.w2cQueue.put('batch_done')
                         self.engine.release_model()
+                        self.loaded = False
                         break
                         
-            if self.imgQueue.empty() and hasInfered:
+            if self.imgQueue.empty() and self.hasInfered:
                 print('all {} images have been processed by worker {}'.format(self.imgs, self.id))
                 # release gpu memory
                 self.engine.release_model()
