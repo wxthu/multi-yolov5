@@ -32,7 +32,8 @@ if __name__ == '__main__':
     for name, model in models.items():
         model.to('cuda')
         for i in tqdm(range(NUM)):
-            y = model(rdm_input)
+            with torch.no_grad():
+                y = model(rdm_input)
         print(f'{name} finished inference and to unload ...')   
         time.sleep(5)
         model.to('cpu')
