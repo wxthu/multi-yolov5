@@ -8,7 +8,7 @@ import os
 import sys
 import numpy as np
 import time
-import pandas as pd
+
 import cv2
 import torch
 
@@ -18,11 +18,13 @@ from models.common import DetectMultiBackend
 from utils.general import check_requirements, print_args
 from utils.torch_utils import time_sync
 from decision import Decision
+import pandas as pd
 
 
 class Detect:
     def __init__(self, model):
-        self.model = model.eval()
+        self.model = model[1].eval()
+        self.name = model[0]
         self.device = 'cpu'
 
     def load_model(self):
@@ -40,7 +42,10 @@ class Detect:
         # Run inference
         dt = []
         t1 = time_sync()
-        im = torch.from_numpy(img).to(self.device)
+        img = img.transpose((0, 3, 1, 2))[::-1]  # HWC to CHW, BGR to RGB
+        img = np.ascontiguousarray(img)
+
+        im = torch.from_numpy(img).type(torch.FloatTensor).to(self.device)
         if len(im.shape) == 3:
             im = im[None]  # expand for batch dim
         
@@ -57,100 +62,12 @@ class Detect:
         t = tuple(x * 1E3 for x in dt)
         print(f'Speed: %.1fms pre-process, %.1fms inference, worker id :%d' % (t + (w_id,)))
 
-
-class Controller:
-    """
-    作为Controller, 监视所有的Worker
-    """
-    def __init__(self, detector_num=3, img_num=250, c2wQueues=None, w2cQueues=None, imgQueues=None, capacity=3):
-        """ 
-        two-way communiaction to prevent message contention
-        """
-        self.cap = capacity  # the number of models accommodated by the device
-        self.act_ids = [] 
-        self.wait_ids = [] 
-        self.img_num = img_num
-        self.c2wQueues = c2wQueues
-        self.w2cQueues = w2cQueues
-        self.imgQueues = imgQueues
-        self.exitSignal = 0  # when all workers finished job, exitSignal == detector_num
-        self.cmds = []  # each element is bool list which indicate the models to be executed at the moment
-        self.cursor = 0 # add cursor for cmds
-        self.initialization()
-
-    def initialization(self):
-        for q in range(len(self.imgQueues)):
-            for i in range(self.img_num):
-                # Too large data will block process 
-                # q.put(np.zeros(shape=(1920, 1080, 3)))
-                self.imgQueues[q].put(i+1)
-
-        df = pd.read_csv('mock_request_rate.csv')
-        for col in df:
-            self.cmds.append(df[col].values)
-
-    def initQueues(self):
-        cmd = self.cmds[self.cursor]
-        candidate = list(range(len(cmd)))
-        candidate = list(filter(lambda i : cmd[i] is True, candidate))
-        self.cursor += 1
-
-        det = Decision()
-        select = det.decision()
-
-        self.act_ids = [x - 1 for x in select]
-        self.wait_ids = [x for x in candidate if x is not in self.act_ids]
-
-
-    def popWorkers(self, lists):
-        for e in lists:
-            ind = self.act_ids.index(e)
-            self.act_ids.pop(ind)
-
-    def update_cmd_queue(self):
-        popLists = []
-        for j in range(len(self.act_ids)):
-            if self.w2cQueues[self.act_ids[j]].empty() is False:
-                cmd = self.w2cQueues[self.act_ids[j]].get()
-                if cmd == 'batch_done':
-                    self.wait_ids.append(self.act_ids[j])  # add into the tail
-
-                if cmd == 'finish':
-                    self.exitSignal += 1
-
-                popLists.append(self.act_ids[j])
-
-        self.popWorkers(popLists)
-        while len(self.act_ids) < self.capacity:
-            if len(self.wait_ids) > 0:
-                new_id = self.wait_ids.pop(0)   # get new workers from head of queue
-                self.c2wQueues[new_id].put('begin')
-                self.c2wQueues[new_id].put('infer')  
-                self.act_ids.append(new_id)
-                print(f'add new worker {new_id} success !!!')
-            else:
-                print(f'no workers waiting for task...')
-                break
-            
-        # print('GPU memory cannot hold more models temporarily ...')
-        return
-
-    def run(self):
-        self.initQueues()
-        while True:
-            self.update_cmd_queue()
-            if self.exitSignal >= self.detector_num:
-                print("all workers has finished jobs !")
-                break
-        return
-            
-
 class Worker:
-
+    
     def __init__(self, id, batchsize, c2wQueue, w2cQueue, imgQueue, time_stamp, model):
         self.id = id
         self.batchsize = batchsize
-        self.engine = Detect(model[1])
+        self.engine = Detect(model)
         self.name = model[0]
         self.c2wQueue = c2wQueue
         self.w2cQueue = w2cQueue
@@ -184,15 +101,115 @@ class Worker:
                         self.loaded = False
                         break
                         
-            if self.imgQueue.empty() and self.hasInfered:
-                print('all {} images have been processed by worker {}'.format(self.imgs, self.id))
-                # release gpu memory
-                self.engine.release_model()
-                self.w2cQueue.put('finish')
-                break
+            # if self.imgQueue.empty() and self.hasInfered:
+            #     print('all {} images have been processed by worker {}'.format(self.imgs, self.id))
+            #     # release gpu memory
+            #     self.engine.release_model()
+            #     self.w2cQueue.put('finish')
+            #     break
+            if self.c2wQueue.get() == 'exit':
+                print(f'worker {self.id} exit ...')
                 
         self.time_stamp.append(time.time())
         return              
+
+class Controller:
+    """
+    作为Controller, 监视所有的Worker
+    """
+    def __init__(self, detector_num=3, img_num=250, c2wQueues=None, w2cQueues=None, imgQueues=None, capacity=3):
+        """ 
+        two-way communiaction to prevent message contention
+        """
+        self.cap = capacity  # the number of models accommodated by the device
+        self.act_ids = [] 
+        self.wait_ids = [] 
+        self.img_num = img_num
+        self.c2wQueues = c2wQueues
+        self.w2cQueues = w2cQueues
+        self.imgQueues = imgQueues
+        self.exitSignal = 0  # when all workers finished job, exitSignal == detector_num
+        self.cmds = []  # each element is bool list which indicate the models to be executed at the moment
+        self.cursor = 0 # add cursor for cmds
+        self.task_num = 0 # record the number of tasks at the moment
+        self.total_requests = 0
+        
+    def initialization(self):
+        for q in range(len(self.imgQueues)):
+            for i in range(self.img_num):
+                # Too large data will block process 
+                # q.put(np.zeros(shape=(1920, 1080, 3)))
+                self.imgQueues[q].put(i+1)
+
+        df = pd.read_csv('mock_request_rate.csv')
+        for col in df:
+            self.cmds.append(df[col].values)
+
+        for x in self.cmds:
+            self.total_requests += sum(x)
+
+    def update_cmd_queue(self):
+        if self.task_num == 0:
+            cmd = self.cmds[self.cursor]
+            self.task_num = len(cmd)
+
+            # add 0 in the front of the list for dynamic programming
+            wts = [0] + [weights[i] for i, elem in enumerate(cmd) if elem]
+            prc = [0] + [prices[i] for i, elem in enumerate(cmd) if elem]
+            candidate = [i for i, elem in enumerate(cmd) if elem]
+
+            self.cursor += 1
+
+            det = Decision(weights=wts, prices=prc, number=len(cmd), capacity=total_memory)
+            select = det.decision()
+
+            self.act_ids = [x - 1 for x in select]
+            self.wait_ids = [x for x in candidate if x not in self.act_ids]
+
+            # To notify worker to load model into GPU memory
+            for i in range(len(self.act_ids)):
+                self.c2wQueues[self.act_ids[i]].put('begin')
+                self.c2wQueues[self.act_ids[i]].put('infer')
+        
+        popLists = []
+        for j in range(len(self.act_ids)):
+            if self.w2cQueues[self.act_ids[j]].empty() is False:
+                cmd = self.w2cQueues[self.act_ids[j]].get()
+                if cmd == 'batch_done':
+                    self.task_num -= 1
+
+                popLists.append(self.act_ids[j])
+
+        self.popWorkers(popLists)
+        while len(self.act_ids) < self.cap:
+            if len(self.wait_ids) > 0:
+                new_id = self.wait_ids.pop(0)   # get new workers from head of queue
+                self.c2wQueues[new_id].put('begin')
+                self.c2wQueues[new_id].put('infer')  
+                self.act_ids.append(new_id)
+                print(f'add new worker {new_id} success !!!')
+            else:
+                print(f'no workers waiting for task...')
+                break
+
+        return
+
+    def popWorkers(self, lists):
+        for e in lists:
+            ind = self.act_ids.index(e)
+            self.act_ids.pop(ind)
+
+
+    def run(self):
+        self.initialization()
+        while self.cursor < len(self.cmds):
+            self.update_cmd_queue()
+
+        for i in range(detector_num):
+            self.c2wQueues[i].put('exit')
+        
+        print(f"all workers has finished jobs, processing {self.total_requests} images in total!")
+        return
 
 def runWorker(i,
             batchsize, 
@@ -207,7 +224,7 @@ def runWorker(i,
                     w2cQueue=w2cQueue,
                     imgQueue=imgQueue, 
                     time_stamp=time_stamp,
-                    engine=model
+                    model=model
                     )
     worker.run()
 
@@ -236,24 +253,6 @@ def parse_opt():
 
 def main(opt):
     check_requirements(exclude=('tensorboard', 'thop'))
-
-    models = []
-    yolov5x = DetectMultiBackend('yolov5x.pt', device=torch.device('cpu'))
-    yolov5s = DetectMultiBackend('yolov5s.pt', device=torch.device('cpu'))
-    models.append(['sqt10', squeezenet1_0()])
-    models.append(['sqt11', squeezenet1_1()])
-    models.append(['rnt18', resnet18()])
-    models.append(['rnt34', resnet34()])
-    models.append(['rnt50', resnet50()])
-    models.append(['rnt101', resnet101()])
-    models.append(['rnt152', resnet152()])
-    models.append(['alexnet', alexnet()])
-    models.append(['vgg11', vgg11()])
-    models.append(['vgg13', vgg13()])
-    models.append(['vgg16', vgg16()])
-    models.append(['yolov5x', yolov5x])
-    models.append(['yolov5s', yolov5s])
-    
     args_dict = vars(opt)
 
     # workers_num = args_dict['workers']
@@ -310,5 +309,26 @@ def main(opt):
 
 
 if __name__ == "__main__":
+    models = []
+    yolov5x = DetectMultiBackend('yolov5x.pt', device=torch.device('cpu'))
+    yolov5s = DetectMultiBackend('yolov5s.pt', device=torch.device('cpu'))
+    # models.append(['sqt10', squeezenet1_0(), 38, 3.96])
+    # models.append(['sqt11', squeezenet1_1(), 26, 3.52])
+    # models.append(['rnt18', resnet18(), 104, 4.39])
+    # models.append(['rnt34', resnet34(), 146, 7.54])
+    models.append(['rnt50', resnet50(), 172, 13.44])
+    # models.append(['rnt101', resnet101(), 246, 22.75])
+    models.append(['rnt152', resnet152(), 318, 32.86])
+    models.append(['alexnet', alexnet(), 246, 4.24])
+    models.append(['vgg11', vgg11(), 598, 13.39])
+    # models.append(['vgg13', vgg13(), 614, 18.59])
+    # models.append(['vgg16', vgg16(), 654, 23.03])
+    models.append(['yolov5x', yolov5x, 410, 31.91])
+    models.append(['yolov5s', yolov5s, 40, 7.46])
+
+    weights = [x[2] for x in models]
+    prices = [x[3] for x in models]
+    total_memory = 1024
+
     opt = parse_opt()
     main(opt)
