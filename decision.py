@@ -16,8 +16,6 @@ class Decision:
         
     def knap(self):
         dp = [[0 for _ in range(self.cap + 1)] for _ in range(self.n + 1)]
-        print(f'weights is ', self.w)
-        print(f'w number : ', self.n)
         for i in range(1, self.n + 1):
             for r in range(1, self.cap + 1):
                 if r < self.w[i]:

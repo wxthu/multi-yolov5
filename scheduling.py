@@ -89,18 +89,21 @@ class Worker:
             if command == 'to_infer':
                 assert self.loaded == True
                 self.hasInfered = True
-                if self.imgQueue.empty() is False:
-                    frames = []
-                    for _ in range(self.batchsize):
-                        if self.imgQueue.qsize() > 0:
-                            self.imgs = self.imgQueue.get()
-                            frames.append(np.zeros(shape=(384, 640, 3)))    
-                    if len(frames) > 0:
-                        pred = self.engine.run(self.id, np.stack(frames))
-                        # send signal to controller
-                        self.w2cQueue.put('batch_done')
-                        self.engine.release_model()
-                        self.loaded = False
+                assert not self.imgQueue.empty()
+
+                frames = []
+                for _ in range(self.batchsize):
+                    if self.imgQueue.qsize() > 0:
+                        self.imgs = self.imgQueue.get()
+                        frames.append(np.zeros(shape=(384, 640, 3)))
+
+                assert len(frames) > 0
+
+                pred = self.engine.run(self.id, np.stack(frames))
+                # send signal to controller
+                self.w2cQueue.put('batch_done')
+                self.engine.release_model()
+                self.loaded = False
                         
             # if self.imgQueue.empty() and self.hasInfered:
             #     print('all {} images have been processed by worker {}'.format(self.imgs, self.id))
@@ -124,6 +127,7 @@ class Controller:
         two-way communiaction to prevent message contention
         """
         self.cap = capacity  # the number of models accommodated by the device
+        self.detector_num = detector_num
         self.act_ids = [] 
         self.wait_ids = [] 
         self.img_num = img_num
@@ -165,7 +169,9 @@ class Controller:
             det = Decision(weights=wts, prices=prc, number=len(candidate), capacity=total_memory)
             select = det.decision()
 
-            self.act_ids = [x - 1 for x in select]
+            self.act_ids = [candidate[x - 1] for x in select]
+
+            assert all(x in candidate for x in self.act_ids)
             self.wait_ids = [x for x in candidate if x not in self.act_ids]
 
             # To notify worker to load model into GPU memory
@@ -187,11 +193,11 @@ class Controller:
             if len(self.wait_ids) > 0:
                 new_id = self.wait_ids.pop(0)   # get new workers from head of queue
                 self.c2wQueues[new_id].put('to_load')
-                self.c2wQueues[new_id].put('to_infer')  
+                self.c2wQueues[new_id].put('to_infer')
                 self.act_ids.append(new_id)
                 print(f'add new worker {new_id} success !!!')
             else:
-                print(f'no workers waiting for task...')
+                # print(f'no workers waiting for task...')
                 break
 
         return
@@ -207,7 +213,7 @@ class Controller:
         while self.cursor < len(self.cmds):
             self.update_cmd_queue()
 
-        for i in range(detector_num):
+        for i in range(self.detector_num):
             self.c2wQueues[i].put('exit')
         
         print(f"all workers has finished jobs, processing {self.total_requests} images in total!")
