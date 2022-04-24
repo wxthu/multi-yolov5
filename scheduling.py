@@ -81,13 +81,15 @@ class Worker:
         self.time_stamp.append(time.time())
 
         while True:
-            if self.c2wQueue.empty() is False and self.c2wQueue.get() == 'begin':
+            command = None if self.c2wQueue.empty() else self.c2wQueue.get()
+            if command == 'to_load':
                 self.engine.load_model()
                 self.loaded = True
                     
-            if self.loaded and self.c2wQueue.empty() is False and self.c2wQueue.get() == 'infer':
+            if command == 'to_infer':
+                assert self.loaded == True
                 self.hasInfered = True
-                while self.imgQueue.empty() is False:
+                if self.imgQueue.empty() is False:
                     frames = []
                     for _ in range(self.batchsize):
                         if self.imgQueue.qsize() > 0:
@@ -99,7 +101,6 @@ class Worker:
                         self.w2cQueue.put('batch_done')
                         self.engine.release_model()
                         self.loaded = False
-                        break
                         
             # if self.imgQueue.empty() and self.hasInfered:
             #     print('all {} images have been processed by worker {}'.format(self.imgs, self.id))
@@ -107,8 +108,9 @@ class Worker:
             #     self.engine.release_model()
             #     self.w2cQueue.put('finish')
             #     break
-            if self.c2wQueue.get() == 'exit':
+            if command == 'exit':
                 print(f'worker {self.id} exit ...')
+                break
                 
         self.time_stamp.append(time.time())
         return              
@@ -151,16 +153,16 @@ class Controller:
     def update_cmd_queue(self):
         if self.task_num == 0:
             cmd = self.cmds[self.cursor]
-            self.task_num = len(cmd)
 
             # add 0 in the front of the list for dynamic programming
             wts = [0] + [weights[i] for i, elem in enumerate(cmd) if elem]
             prc = [0] + [prices[i] for i, elem in enumerate(cmd) if elem]
             candidate = [i for i, elem in enumerate(cmd) if elem]
-
+            
+            self.task_num = len(candidate)
             self.cursor += 1
 
-            det = Decision(weights=wts, prices=prc, number=len(cmd), capacity=total_memory)
+            det = Decision(weights=wts, prices=prc, number=len(candidate), capacity=total_memory)
             select = det.decision()
 
             self.act_ids = [x - 1 for x in select]
@@ -168,8 +170,8 @@ class Controller:
 
             # To notify worker to load model into GPU memory
             for i in range(len(self.act_ids)):
-                self.c2wQueues[self.act_ids[i]].put('begin')
-                self.c2wQueues[self.act_ids[i]].put('infer')
+                self.c2wQueues[self.act_ids[i]].put('to_load')
+                self.c2wQueues[self.act_ids[i]].put('to_infer')
         
         popLists = []
         for j in range(len(self.act_ids)):
@@ -184,8 +186,8 @@ class Controller:
         while len(self.act_ids) < self.cap:
             if len(self.wait_ids) > 0:
                 new_id = self.wait_ids.pop(0)   # get new workers from head of queue
-                self.c2wQueues[new_id].put('begin')
-                self.c2wQueues[new_id].put('infer')  
+                self.c2wQueues[new_id].put('to_load')
+                self.c2wQueues[new_id].put('to_infer')  
                 self.act_ids.append(new_id)
                 print(f'add new worker {new_id} success !!!')
             else:
