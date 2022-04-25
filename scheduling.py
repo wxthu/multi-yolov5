@@ -122,11 +122,14 @@ class Controller:
     """
     作为Controller, 监视所有的Worker
     """
-    def __init__(self, detector_num=3, img_num=250, c2wQueues=None, w2cQueues=None, imgQueues=None, capacity=3):
+    def __init__(self, detector_num=3, img_num=250, c2wQueues=None, w2cQueues=None, imgQueues=None, 
+                weights=None, prices=None, mem=1024):
         """ 
         two-way communiaction to prevent message contention
         """
-        self.cap = capacity  # the number of models accommodated by the device
+        self.weights = weights
+        self.prices = prices
+        self.memory = mem  # memory contraint
         self.detector_num = detector_num
         self.act_ids = [] 
         self.wait_ids = [] 
@@ -153,20 +156,31 @@ class Controller:
 
         for x in self.cmds:
             self.total_requests += sum(x)
-
+            
+    def compare(self, i):
+        return self.weights[i]
+    
+    def remainingMemory(self):
+        total = 0
+        for i in self.act_ids:
+            total += self.weights[i]
+        
+        return self.memory - total
+    
     def update_cmd_queue(self):
         if self.task_num == 0:
             cmd = self.cmds[self.cursor]
 
             # add 0 in the front of the list for dynamic programming
-            wts = [0] + [weights[i] for i, elem in enumerate(cmd) if elem]
-            prc = [0] + [prices[i] for i, elem in enumerate(cmd) if elem]
+            wts = [0] + [self.weights[i] for i, elem in enumerate(cmd) if elem]
+            prc = [0] + [self.prices[i] for i, elem in enumerate(cmd) if elem]
             candidate = [i for i, elem in enumerate(cmd) if elem]
+            candidate.sort(key=self.compare)
             
             self.task_num = len(candidate)
             self.cursor += 1
 
-            det = Decision(weights=wts, prices=prc, number=len(candidate), capacity=total_memory)
+            det = Decision(weights=wts, prices=prc, number=len(candidate), capacity=self.memory)
             select = det.decision()
 
             self.act_ids = [candidate[x - 1] for x in select]
@@ -189,15 +203,17 @@ class Controller:
                 popLists.append(self.act_ids[j])
 
         self.popWorkers(popLists)
-        while len(self.act_ids) < self.cap:
-            if len(self.wait_ids) > 0:
+        reMem = self.remainingMemory()
+        while reMem > 0:
+            if len(self.wait_ids) > 0 and self.weights[self.wait_ids[0]] <= reMem:
                 new_id = self.wait_ids.pop(0)   # get new workers from head of queue
                 self.c2wQueues[new_id].put('to_load')
                 self.c2wQueues[new_id].put('to_infer')
                 self.act_ids.append(new_id)
                 print(f'add new worker {new_id} success !!!')
+                reMem -= weights[new_id]
             else:
-                # print(f'no workers waiting for task...')
+                # print(f'Unable to accommodate more models for the time being...')
                 break
 
         return
@@ -206,7 +222,6 @@ class Controller:
         for e in lists:
             ind = self.act_ids.index(e)
             self.act_ids.pop(ind)
-
 
     def run(self):
         self.initialization()
@@ -242,9 +257,12 @@ def runController(workers_num,
                   c2wQueues,
                   w2cQueues, 
                   imgQueues,
-                  capacity):
+                  weights, 
+                  prices,
+                  total_memory):
     controller = Controller(detector_num=workers_num, img_num=image_num*video_num, c2wQueues=c2wQueues,
-                            w2cQueues=w2cQueues, imgQueues=imgQueues, capacity=capacity)
+                            w2cQueues=w2cQueues, imgQueues=imgQueues, weights=weights, prices=prices,
+                            mem=total_memory)
     controller.run()
 
 def parse_opt():
@@ -284,7 +302,9 @@ def main(opt):
                                                      c2wQueues,
                                                      w2cQueues,
                                                      imgQueues,
-                                                     capacity,
+                                                     weights,
+                                                     prices,
+                                                     total_memory
                                                      )
                          )
     
