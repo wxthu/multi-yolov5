@@ -1,4 +1,5 @@
 """
+We often select rnt50, rnt152, alexnet, vgg11, yolov5s and yolov5x for testing
 """
 
 import argparse
@@ -17,9 +18,7 @@ from torchvision.models import alexnet, vgg16, vgg13, vgg11, squeezenet1_0, sque
 from models.common import DetectMultiBackend
 from utils.general import check_requirements, print_args
 from utils.torch_utils import time_sync
-from decision import Decision
-import pandas as pd
-
+from controller import Controller
 
 class Detect:
     def __init__(self, model):
@@ -117,122 +116,6 @@ class Worker:
                 
         self.time_stamp.append(time.time())
         return              
-
-class Controller:
-    """
-    作为Controller, 监视所有的Worker
-    """
-    def __init__(self, detector_num=3, img_num=250, c2wQueues=None, w2cQueues=None, imgQueues=None, 
-                weights=None, prices=None, mem=1024):
-        """ 
-        two-way communiaction to prevent message contention
-        """
-        self.weights = weights
-        self.prices = prices
-        self.memory = mem  # memory contraint
-        self.detector_num = detector_num
-        self.act_ids = [] 
-        self.wait_ids = [] 
-        self.img_num = img_num
-        self.c2wQueues = c2wQueues
-        self.w2cQueues = w2cQueues
-        self.imgQueues = imgQueues
-        self.exitSignal = 0  # when all workers finished job, exitSignal == detector_num
-        self.cmds = []  # each element is bool list which indicate the models to be executed at the moment
-        self.cursor = 0 # add cursor for cmds
-        self.task_num = 0 # record the number of tasks at the moment
-        self.total_requests = 0
-        
-    def initialization(self):
-        for q in range(len(self.imgQueues)):
-            for i in range(self.img_num):
-                # Too large data will block process 
-                # q.put(np.zeros(shape=(1920, 1080, 3)))
-                self.imgQueues[q].put(i+1)
-
-        df = pd.read_csv('mock_request_rate.csv')
-        for col in df:
-            self.cmds.append(df[col].values)
-
-        for x in self.cmds:
-            self.total_requests += sum(x)
-            
-    def compare(self, i):
-        return self.weights[i]
-    
-    def remainingMemory(self):
-        total = 0
-        for i in self.act_ids:
-            total += self.weights[i]
-        
-        return self.memory - total
-    
-    def update_cmd_queue(self):
-        if self.task_num == 0:
-            cmd = self.cmds[self.cursor]
-
-            # add 0 in the front of the list for dynamic programming
-            wts = [0] + [self.weights[i] for i, elem in enumerate(cmd) if elem]
-            prc = [0] + [self.prices[i] for i, elem in enumerate(cmd) if elem]
-            candidate = [i for i, elem in enumerate(cmd) if elem]
-            candidate.sort(key=self.compare)
-            
-            self.task_num = len(candidate)
-            self.cursor += 1
-
-            det = Decision(weights=wts, prices=prc, number=len(candidate), capacity=self.memory)
-            select = det.decision()
-
-            self.act_ids = [candidate[x - 1] for x in select]
-
-            assert all(x in candidate for x in self.act_ids)
-            self.wait_ids = [x for x in candidate if x not in self.act_ids]
-
-            # To notify worker to load model into GPU memory
-            for i in range(len(self.act_ids)):
-                self.c2wQueues[self.act_ids[i]].put('to_load')
-                self.c2wQueues[self.act_ids[i]].put('to_infer')
-        
-        popLists = []
-        for j in range(len(self.act_ids)):
-            if self.w2cQueues[self.act_ids[j]].empty() is False:
-                cmd = self.w2cQueues[self.act_ids[j]].get()
-                if cmd == 'batch_done':
-                    self.task_num -= 1
-
-                popLists.append(self.act_ids[j])
-
-        self.popWorkers(popLists)
-        reMem = self.remainingMemory()
-        while reMem > 0:
-            if len(self.wait_ids) > 0 and self.weights[self.wait_ids[0]] <= reMem:
-                new_id = self.wait_ids.pop(0)   # get new workers from head of queue
-                self.c2wQueues[new_id].put('to_load')
-                self.c2wQueues[new_id].put('to_infer')
-                self.act_ids.append(new_id)
-                print(f'add new worker {new_id} success !!!')
-                reMem -= weights[new_id]
-            else:
-                # print(f'Unable to accommodate more models for the time being...')
-                break
-
-        return
-
-    def popWorkers(self, lists):
-        for e in lists:
-            ind = self.act_ids.index(e)
-            self.act_ids.pop(ind)
-
-    def run(self):
-        self.initialization()
-        while self.cursor < len(self.cmds):
-            self.update_cmd_queue()
-
-        for i in range(self.detector_num):
-            self.c2wQueues[i].put('exit')
-        
-        print(f"all workers has finished jobs, processing {self.total_requests} images in total!")
-        return
 
 def runWorker(i,
             batchsize, 
@@ -340,19 +223,19 @@ if __name__ == "__main__":
     models = []
     yolov5x = DetectMultiBackend('yolov5x.pt', device=torch.device('cpu'))
     yolov5s = DetectMultiBackend('yolov5s.pt', device=torch.device('cpu'))
-    # models.append(['sqt10', squeezenet1_0(), 38, 3.96])
-    # models.append(['sqt11', squeezenet1_1(), 26, 3.52])
-    # models.append(['rnt18', resnet18(), 104, 4.39])
-    # models.append(['rnt34', resnet34(), 146, 7.54])
-    models.append(['rnt50', resnet50(), 172, 13.44])
-    # models.append(['rnt101', resnet101(), 246, 22.75])
-    models.append(['rnt152', resnet152(), 318, 32.86])
-    models.append(['alexnet', alexnet(), 246, 4.24])
-    models.append(['vgg11', vgg11(), 598, 13.39])
+    # models.append(['sqt10', squeezenet1_0(), 38, 3.96, 10.0])
+    # models.append(['sqt11', squeezenet1_1(), 26, 3.52, 9.62])
+    # models.append(['rnt18', resnet18(), 104, 4.39, 24.2])
+    # models.append(['rnt34', resnet34(), 146, 7.54, 43.22])
+    models.append(['rnt50', resnet50(), 172, 13.44, 59.84])
+    # models.append(['rnt101', resnet101(), 246, 22.75, 132.62])
+    models.append(['rnt152', resnet152(), 318, 32.86, 179.28])
+    models.append(['alexnet', alexnet(), 246, 4.24, 136.29])
+    models.append(['vgg11', vgg11(), 598, 13.39, 304.11])
     # models.append(['vgg13', vgg13(), 614, 18.59])
     # models.append(['vgg16', vgg16(), 654, 23.03])
-    models.append(['yolov5x', yolov5x, 410, 31.91])
-    models.append(['yolov5s', yolov5s, 40, 7.46])
+    models.append(['yolov5x', yolov5x, 410, 31.91, 140.8])
+    models.append(['yolov5s', yolov5s, 40, 7.46, 27.29])
 
     weights = [x[2] for x in models]
     prices = [x[3] for x in models]
