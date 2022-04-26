@@ -6,8 +6,8 @@ class Controller:
     """
     作为Controller, 监视所有的Worker
     """
-    def __init__(self, detector_num=3, img_num=800, mem=1024, config=None, c2wQueues=None,
-                w2cQueues=None, imgQueues=None):
+    def __init__(self, detector_num=3, img_num=800, mem=1024, config=None, strategy='infer_time',
+                c2wQueues=None, w2cQueues=None, imgQueues=None):
         """ 
         two-way communiaction to prevent message contention
         """
@@ -28,6 +28,7 @@ class Controller:
         self.task_num = 0 # record the number of tasks at the moment
         self.total_requests = 0
         self.config = config  # list, each element is dictionary
+        self.strat = strategy
         
     def initialization(self):
         for q in range(len(self.imgQueues)):
@@ -69,14 +70,14 @@ class Controller:
                     candidate.append(i)
                     self.batches.append(batch)
                     self.weights.append(self.config[i][batch][0])
-                    self.prices.append(self.config[i][batch][1]['infer_time'])
+                    self.prices.append(self.config[i][batch][1][self.strat])
                     wts.append(self.config[i][batch][0])
-                    prc.append(self.config[i][batch][1]['infer_time'])
+                    prc.append(self.config[i][batch][1][self.strat])
                 else:
                     # when detector i is not selected , we still add one element in the list 
                     # to ensure the consistency of indexing
                     self.weights.append(self.config[i][1][0])
-                    self.prices.append(self.config[i][1][1]['infer_time'])
+                    self.prices.append(self.config[i][1][1][self.strat])
             
             candidate.sort(key=self.compare_p)
             
@@ -110,26 +111,29 @@ class Controller:
                 popLists.append(self.act_ids[j])
 
         self.popWorkers(popLists)
+        popLists.clear()
         reMem = self.remainingMemory()
+
         while reMem > 0:
             if len(self.wait_ids) > 0:
                 for ind in self.wait_ids:
                     if self.weights[ind] <= reMem:
-                        new_id = self.wait_ids.pop(0)   # get new workers from head of queue
-                        self.c2wQueues[new_id].put('to_load')
-                        self.c2wQueues[new_id].put('to_infer')
+                        popLists.append(self.wait_ids.index(ind))
+                        self.c2wQueues[ind].put('to_load')
+                        self.c2wQueues[ind].put('to_infer')
 
                         assert len(self.batches) > 0
-                        self.c2wQueues[self.act_ids[i]].put(self.batches.pop(0))
-                        self.act_ids.append(new_id)
-                        print(f'add new worker {new_id} success !!!')
-                        reMem -= self.weights[new_id]
+                        self.c2wQueues[ind].put(self.batches.pop(0))
+                        self.act_ids.append(ind)
+                        print(f'add new worker {ind} success !!!')
+                        reMem -= self.weights[ind]
                         break
             else:
                 # print(f'Unable to accommodate more models for the time being...')
                 pass
             break
-
+        
+        self.popWorkers(popLists)
         return
 
     def popWorkers(self, lists):

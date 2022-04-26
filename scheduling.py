@@ -92,9 +92,12 @@ class Worker:
                 assert self.loaded == True
                 self.hasInfered = True
                 assert not self.imgQueue.empty()
-
+                
+                while self.c2wQueue.empty():
+                    pass
+                batch_cmd = self.c2wQueue.get()
                 frames = []
-                for _ in range(self.batchsize):
+                for _ in range(int(batch_cmd)):
                     if self.imgQueue.qsize() > 0:
                         self.imgs = self.imgQueue.get()
                         frames.append(np.zeros(shape=(384, 640, 3)))
@@ -144,9 +147,10 @@ def runController(workers_num,
                   w2cQueues, 
                   imgQueues,
                   total_memory,
-                  config):
+                  config,
+                  strategy):
     controller = Controller(detector_num=workers_num, img_num=image_num*video_num, mem=total_memory, config=config,
-                            c2wQueues=c2wQueues, w2cQueues=w2cQueues, imgQueues=imgQueues)
+                            strategy=strategy, c2wQueues=c2wQueues, w2cQueues=w2cQueues, imgQueues=imgQueues)
     controller.run()
 
 def parse_opt():
@@ -156,6 +160,7 @@ def parse_opt():
     parser.add_argument('--videos', type=int, default=4, help='the number of video stream')
     parser.add_argument('--workers', type=int, default=6, help='the number of detector')
     parser.add_argument('--memory', type=int, default=1500, help='available gpu memory in the server')
+    parser.add_argument('--strategy', type=str, default='infer_time', help='scheduling strategy')
     opt = parser.parse_args()
     print_args(vars(opt))
     return opt
@@ -165,12 +170,17 @@ def main(opt):
     check_requirements(exclude=('tensorboard', 'thop'))
     args_dict = vars(opt)
 
-    # workers_num = args_dict['workers']
+    strategies = ['infer_time', 'total_time', 'gpu_util']
     workers_num = len(models)
     image_num = args_dict['img_num']
     batchsize = args_dict['bs']
     video_num = args_dict['videos']
     total_memory = args_dict['memory']
+    strategy = args_dict['strategy']
+
+    if strategy not in strategies:
+        strategy = 'infer_time'
+        print('*****  Expected strategy is non-existent and assign it by default *****')
     
     config = [x[2] for x in models]
     # record all workers timestamp
@@ -188,7 +198,8 @@ def main(opt):
                                                      w2cQueues,
                                                      imgQueues,
                                                      total_memory,
-                                                     config
+                                                     config,
+                                                     strategy
                                                      )
                          )
     
@@ -226,7 +237,7 @@ if __name__ == "__main__":
     yolov5x = DetectMultiBackend('yolov5x.pt', device=torch.device('cpu'))
     yolov5s = DetectMultiBackend('yolov5s.pt', device=torch.device('cpu'))
 
-    # profiling : memory, inference, total_time, gpu_utilization
+    profiling : memory, inference, total_time, gpu_utilization
     models.append(['sqt10', squeezenet1_0(), {1:[58, {'infer_time':3.96, 'total_time':10.0, 'gpu_util':47}],
                                               2:[120, {'infer_time':8.58, 'total_time':14.62, 'gpu_util':65}],
                                               3:[186, {'infer_time':13.05, 'total_time':19.09, 'gpu_util':74}],
