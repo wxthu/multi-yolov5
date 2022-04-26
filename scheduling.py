@@ -157,7 +157,7 @@ def parse_opt():
     parser.add_argument('--img_num', type=int, default=50, help='the number of img sent by each client')
     parser.add_argument('--videos', type=int, default=4, help='the number of video stream')
     parser.add_argument('--workers', type=int, default=6, help='the number of detector')
-    parser.add_argument('--capacity', type=int, default=3, help='the number of supported detectors executing parallelly')
+    parser.add_argument('--memory', type=int, default=1500, help='available gpu memory in the server')
     opt = parser.parse_args()
     print_args(vars(opt))
     return opt
@@ -172,7 +172,7 @@ def main(opt):
     image_num = args_dict['img_num']
     batchsize = args_dict['bs']
     video_num = args_dict['videos']
-    capacity = args_dict['capacity']
+    total_memory = args_dict['memory']
     
     # record all workers timestamp
     time_stamp = Manager().list()
@@ -229,23 +229,22 @@ if __name__ == "__main__":
     yolov5s = DetectMultiBackend('yolov5s.pt', device=torch.device('cpu'))
 
     # profiling : memory, inference, total_time, gpu_utilization
-    models.append(['sqt10', squeezenet1_0(), 38, {'infer_time':3.96, 'total_time':10.0, 'gpu_util':47}])
-    models.append(['sqt11', squeezenet1_1(), 26, {'infer_time':3.52, 'total_time':9.62, 'gpu_util':40}])
-    models.append(['rnt18', resnet18(), 104, {'infer_time':4.39, 'total_time':24.2, 'gpu_util':54}])
-    models.append(['rnt34', resnet34(), 146, {'infer_time':7.54, 'total_time':43.22, 'gpu_util':54}])
-    models.append(['rnt50', resnet50(), 172, {'infer_time':13.44, 'total_time':59.84, 'gpu_util':56}])
-    models.append(['rnt101', resnet101(), 246, {'infer_time':22.75, 'total_time':132.62, 'gpu_util':50}])
-    models.append(['rnt152', resnet152(), 318, {'infer_time':32.86, 'total_time':179.28, 'gpu_util':55}])
-    models.append(['alexnet', alexnet(), 246, {'infer_time':4.24, 'total_time':136.29, 'gpu_util':39}])
-    models.append(['vgg11', vgg11(), 598, {'infer_time':13.39, 'total_time':304.11, 'gpu_util':43}])
-    models.append(['vgg13', vgg13(), 614, {'infer_time':18.59, 'total_time':306.89, 'gpu_util':44}])
-    models.append(['vgg16', vgg16(), 654, {'infer_time':23.03, 'total_time':319.4, 'gpu_util':46}])
-    models.append(['yolov5x', yolov5x, 410, {'infer_time':31.91, 'total_time':140.8, 'gpu_util':70}])
-    models.append(['yolov5s', yolov5s, 40, {'infer_time':7.46, 'total_time':27.29, 'gpu_util':40}])
+    models.append(['sqt10', squeezenet1_0(), 58, {'infer_time':3.96, 'total_time':10.0, 'gpu_util':47}])
+    models.append(['sqt11', squeezenet1_1(), 46, {'infer_time':3.52, 'total_time':9.62, 'gpu_util':40}])
+    models.append(['rnt18', resnet18(), 124, {'infer_time':4.39, 'total_time':24.2, 'gpu_util':54}])
+    models.append(['rnt34', resnet34(), 166, {'infer_time':7.54, 'total_time':43.22, 'gpu_util':54}])
+    models.append(['rnt50', resnet50(), 192, {'infer_time':13.44, 'total_time':59.84, 'gpu_util':56}])
+    models.append(['rnt101', resnet101(), 266, {'infer_time':22.75, 'total_time':132.62, 'gpu_util':50}])
+    models.append(['rnt152', resnet152(), 334, {'infer_time':32.86, 'total_time':179.28, 'gpu_util':55}])
+    models.append(['alexnet', alexnet(), 264, {'infer_time':4.24, 'total_time':136.29, 'gpu_util':39}])
+    models.append(['vgg11', vgg11(), 618, {'infer_time':13.39, 'total_time':304.11, 'gpu_util':43}])
+    models.append(['vgg13', vgg13(), 634, {'infer_time':18.59, 'total_time':306.89, 'gpu_util':44}])
+    models.append(['vgg16', vgg16(), 674, {'infer_time':23.03, 'total_time':319.4, 'gpu_util':46}])
+    models.append(['yolov5x', yolov5x, 422, {'infer_time':31.91, 'total_time':140.8, 'gpu_util':70}])
+    models.append(['yolov5s', yolov5s, 60, {'infer_time':7.46, 'total_time':27.29, 'gpu_util':40}])
 
     weights = [x[2] for x in models]
     prices = [x[3]['gpu_util'] for x in models]
-    total_memory = 1024
 
     opt = parse_opt()
     main(opt)
