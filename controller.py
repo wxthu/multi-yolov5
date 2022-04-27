@@ -18,6 +18,7 @@ class Controller:
         self.detector_num = detector_num
         self.act_ids = [] 
         self.wait_ids = [] 
+        self.candidate = []
         self.img_num = img_num
         self.c2wQueues = c2wQueues
         self.w2cQueues = w2cQueues
@@ -43,9 +44,18 @@ class Controller:
 
         for x in self.cmds:
             self.total_requests += sum(x)
-            
-    def compare_w(self, i):
-        return self.weights[i]
+
+    # select worker from waiting list 
+    def addWorker(self, memory):
+        price = 0
+        selected_w_id = -1
+        for w in self.wait_ids:
+            if self.weights[w] <= memory:
+                if self.prices[w] > price:
+                    price = self.prices[w]
+                    selected_w_id = w
+        
+        return addWorker
     
     def compare_p(self, i):
         return self.prices[i]
@@ -60,14 +70,15 @@ class Controller:
     def update_cmd_queue(self):
         if self.task_num == 0:
             cmd = self.cmds[self.cursor]
+            self.batches.clear()
+            self.candidate.clear()
 
             # add 0 in the front of the list for dynamic programming
             wts = [0] 
             prc = [0]
-            candidate = []
             for i, batch in enumerate(cmd):
                 if batch:
-                    candidate.append(i)
+                    self.candidate.append(i)
                     self.batches.append(batch)
                     self.weights.append(self.config[i][batch][0])
                     self.prices.append(self.config[i][batch][1][self.strat])
@@ -78,28 +89,26 @@ class Controller:
                     # to ensure the consistency of indexing
                     self.weights.append(self.config[i][1][0])
                     self.prices.append(self.config[i][1][1][self.strat])
+
+            # candidate.sort(key=self.compare_p)
             
-            candidate.sort(key=self.compare_p)
-            
-            self.task_num = len(candidate)
+            self.task_num = len(self.candidate)
             self.cursor += 1
 
-            det = Decision(weights=wts, prices=prc, number=len(candidate), capacity=self.memory)
+            det = Decision(weights=wts, prices=prc, number=len(self.candidate), capacity=self.memory)
             select = det.decision()
 
-            self.act_ids = [candidate[x - 1] for x in select]
+            self.act_ids = [self.candidate[x - 1] for x in select]
 
-            assert all(x in candidate for x in self.act_ids)
-            self.wait_ids = [x for x in candidate if x not in self.act_ids]
+            assert all(x in self.candidate for x in self.act_ids)
+            self.wait_ids = [x for x in self.candidate if x not in self.act_ids]
 
             # To notify worker to load model into GPU memory
             for i in self.act_ids:
                 self.c2wQueues[i].put('to_load')
                 self.c2wQueues[i].put('to_infer')
-
-                # here we treat list as queue and pop the head element
-                assert len(self.batches) > 0
-                self.c2wQueues[i].put(self.batches.pop(0))
+                ic = self.candidate.index(i)    
+                self.c2wQueues[i].put(self.batches[ic])
         
         popLists = []
         for j in self.act_ids:
@@ -112,26 +121,25 @@ class Controller:
 
         self.popWorkers(popLists)
         popLists.clear()
+
         reMem = self.remainingMemory()
-        
         while reMem > 0:
-            if len(self.wait_ids) > 0:
-                for ind in self.wait_ids:
-                    if self.weights[ind] <= reMem:
-                        idx = self.wait_ids.index(ind)
-                        self.c2wQueues[ind].put('to_load')
-                        self.c2wQueues[ind].put('to_infer')
+            while len(self.wait_ids) > 0:
+                ind = self.addWorker(reMem)
+                if ind < 0:
+                    break
+                else:
+                    idx = self.wait_ids.index(ind)
+                    ic = self.candidate.index(ind) 
+                    self.c2wQueues[ind].put('to_load')
+                    self.c2wQueues[ind].put('to_infer')
+                    self.c2wQueues[ind].put(self.batches[ic])  
+                    self.act_ids.append(ind)
+                    print(f'add new worker {ind} success !!!')
+                    reMem -= self.weights[ind]
 
-                        assert len(self.batches) > 0
-                        # Actually batches should correspond to candidate after sorting, to fix in future
-                        self.c2wQueues[ind].put(self.batches.pop(0))  
-                        self.act_ids.append(ind)
-                        print(f'add new worker {ind} success !!!')
-                        reMem -= self.weights[ind]
-
-                        # Must pop it in time to avoid dead lock
-                        self.wait_ids.pop(idx)
-                        break
+                    # Must pop it in time to avoid dead lock
+                    self.wait_ids.pop(idx)
             else:
                 # print(f'Unable to accommodate more models for the time being...')
                 pass
@@ -146,8 +154,10 @@ class Controller:
 
     def run(self):
         self.initialization()
-        while self.cursor < len(self.cmds):
+        while True:
             self.update_cmd_queue()
+            if self.cursor >= len(self.cmds) and len(self.act_ids) + len(self.wait_ids) == 0:
+                break
 
         for i in range(self.detector_num):
             self.c2wQueues[i].put('exit')

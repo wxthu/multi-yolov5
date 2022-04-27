@@ -51,7 +51,7 @@ class Detect:
         if len(im.shape) == 3:
             im = im[None]  # expand for batch dim
         
-        print('data shape is ', im.shape)  
+        print(f'worker {w_id} : data shape is {im.shape} ', )  
         t2 = time_sync()
         dt.append(t2 - t1)
         
@@ -117,7 +117,7 @@ class Worker:
             #     self.w2cQueue.put('finish')
             #     break
             if command == 'exit':
-                print(f'worker {self.id} exit ...')
+                print(f'worker {self.id} processed image number : {self.imgs} and to exit ...')
                 break
                 
         self.time_stamp.append(time.time())
