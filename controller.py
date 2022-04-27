@@ -93,47 +93,50 @@ class Controller:
             self.wait_ids = [x for x in candidate if x not in self.act_ids]
 
             # To notify worker to load model into GPU memory
-            for i in range(len(self.act_ids)):
-                self.c2wQueues[self.act_ids[i]].put('to_load')
-                self.c2wQueues[self.act_ids[i]].put('to_infer')
+            for i in self.act_ids:
+                self.c2wQueues[i].put('to_load')
+                self.c2wQueues[i].put('to_infer')
 
                 # here we treat list as queue and pop the head element
                 assert len(self.batches) > 0
-                self.c2wQueues[self.act_ids[i]].put(self.batches.pop(0))
+                self.c2wQueues[i].put(self.batches.pop(0))
         
         popLists = []
-        for j in range(len(self.act_ids)):
-            if self.w2cQueues[self.act_ids[j]].empty() is False:
-                cmd = self.w2cQueues[self.act_ids[j]].get()
+        for j in self.act_ids:
+            if self.w2cQueues[j].empty() is False:
+                cmd = self.w2cQueues[j].get()
                 if cmd == 'batch_done':
                     self.task_num -= 1
 
-                popLists.append(self.act_ids[j])
+                popLists.append(j)
 
         self.popWorkers(popLists)
         popLists.clear()
         reMem = self.remainingMemory()
-
+        
         while reMem > 0:
             if len(self.wait_ids) > 0:
                 for ind in self.wait_ids:
                     if self.weights[ind] <= reMem:
-                        popLists.append(self.wait_ids.index(ind))
+                        idx = self.wait_ids.index(ind)
                         self.c2wQueues[ind].put('to_load')
                         self.c2wQueues[ind].put('to_infer')
 
                         assert len(self.batches) > 0
-                        self.c2wQueues[ind].put(self.batches.pop(0))
+                        # Actually batches should correspond to candidate after sorting, to fix in future
+                        self.c2wQueues[ind].put(self.batches.pop(0))  
                         self.act_ids.append(ind)
                         print(f'add new worker {ind} success !!!')
                         reMem -= self.weights[ind]
+
+                        # Must pop it in time to avoid dead lock
+                        self.wait_ids.pop(idx)
                         break
             else:
                 # print(f'Unable to accommodate more models for the time being...')
                 pass
             break
         
-        self.popWorkers(popLists)
         return
 
     def popWorkers(self, lists):

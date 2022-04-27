@@ -237,7 +237,7 @@ if __name__ == "__main__":
     yolov5x = DetectMultiBackend('yolov5x.pt', device=torch.device('cpu'))
     yolov5s = DetectMultiBackend('yolov5s.pt', device=torch.device('cpu'))
 
-    profiling : memory, inference, total_time, gpu_utilization
+    # profiling : memory, inference, total_time, gpu_utilization
     models.append(['sqt10', squeezenet1_0(), {1:[58, {'infer_time':3.96, 'total_time':10.0, 'gpu_util':47}],
                                               2:[120, {'infer_time':8.58, 'total_time':14.62, 'gpu_util':65}],
                                               3:[186, {'infer_time':13.05, 'total_time':19.09, 'gpu_util':74}],
