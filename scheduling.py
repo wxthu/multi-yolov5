@@ -9,11 +9,8 @@ import argparse
 import multiprocessing
 from multiprocessing import Process, Queue, Manager
 import os
-import sys
 import numpy as np
 import time
-
-import cv2
 import torch
 
 from torchvision.models.resnet import resnet18, resnet34, resnet50, resnet101, resnet152
@@ -114,7 +111,7 @@ class Worker:
             #     self.w2cQueue.put('finish')
             #     break
             if command == 'exit':
-                print(f'worker {self.id} exit ...')
+                print(f'worker {self.id} has processed {self.imgs} imgs and exit ...')
                 break
                 
         self.time_stamp.append(time.time())

@@ -40,9 +40,17 @@ class Controller:
 
         for x in self.cmds:
             self.total_requests += sum(x)
-            
-    def compare_w(self, i):
-        return self.weights[i]
+    
+    def addWorker(self, memory):
+        price = 0
+        selected_w_id = -1
+        for w in self.wait_ids:
+            if self.weights[w] <= memory:
+                if self.prices[w] > price:
+                    price = self.prices[w]
+                    selected_w_id = w
+        
+        return selected_w_id        
     
     def compare_p(self, i):
         return self.prices[i]
@@ -62,7 +70,6 @@ class Controller:
             wts = [0] + [self.weights[i] for i, elem in enumerate(cmd) if elem]
             prc = [0] + [self.prices[i] for i, elem in enumerate(cmd) if elem]
             candidate = [i for i, elem in enumerate(cmd) if elem]
-            candidate.sort(key=self.compare_p)
             
             self.task_num = len(candidate)
             self.cursor += 1
@@ -76,39 +83,38 @@ class Controller:
             self.wait_ids = [x for x in candidate if x not in self.act_ids]
 
             # To notify worker to load model into GPU memory
-            for i in range(len(self.act_ids)):
-                self.c2wQueues[self.act_ids[i]].put('to_load')
-                self.c2wQueues[self.act_ids[i]].put('to_infer')
+            for i in self.act_ids:
+                self.c2wQueues[i].put('to_load')
+                self.c2wQueues[i].put('to_infer')
         
         popLists = []
-        for j in range(len(self.act_ids)):
-            if self.w2cQueues[self.act_ids[j]].empty() is False:
-                cmd = self.w2cQueues[self.act_ids[j]].get()
+        for j in self.act_ids:
+            if self.w2cQueues[j].empty() is False:
+                cmd = self.w2cQueues[j].get()
                 if cmd == 'batch_done':
                     self.task_num -= 1
 
-                popLists.append(self.act_ids[j])
+                popLists.append(j)
 
         self.popWorkers(popLists)
+        popLists.clear()
         reMem = self.remainingMemory()
-        # print(f"**** remkk;k;k; {reMem}")
-        while reMem > 0:
-            if len(self.wait_ids) > 0:
-                # print(f'wait id : {self.wait_ids}')
-                for ind in self.wait_ids:
-                    # print(f'current wait : {ind}')
-                    if self.weights[ind] <= reMem:
-                        new_id = self.wait_ids.pop(0)   # get new workers from head of queue
-                        self.c2wQueues[new_id].put('to_load')
-                        self.c2wQueues[new_id].put('to_infer')
-                        self.act_ids.append(new_id)
-                        print(f'add new worker {new_id} success !!!')
-                        reMem -= self.weights[new_id]
-                        break
-            else:
-                # print(f'Unable to accommodate more models for the time being...')
-                pass
-            break
+        
+        if reMem > 0:
+            while len(self.wait_ids) > 0:
+                ind = self.addWorker(reMem)
+                if ind < 0:
+                    # print(f'Unable to accommodate more models for the time being...')
+                    break
+                else:
+                    idx = self.wait_ids.index(ind)
+                    self.c2wQueues[ind].put('to_load')
+                    self.c2wQueues[ind].put('to_infer')
+                    self.act_ids.append(ind)
+                    print(f'add new worker {ind} success !!!')
+                    reMem -= self.weights[ind]
+                    
+                    self.wait_ids.pop(idx)
 
         return
 
@@ -119,8 +125,10 @@ class Controller:
 
     def run(self):
         self.initialization()
-        while self.cursor < len(self.cmds):
+        while True:
             self.update_cmd_queue()
+            if self.cursor >= len(self.cmds) and len(self.act_ids) + len(self.wait_ids) == 0:
+                break
 
         for i in range(self.detector_num):
             self.c2wQueues[i].put('exit')
