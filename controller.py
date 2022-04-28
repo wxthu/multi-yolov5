@@ -55,7 +55,7 @@ class Controller:
                     price = self.prices[w]
                     selected_w_id = w
         
-        return addWorker
+        return selected_w_id
     
     def compare_p(self, i):
         return self.prices[i]
@@ -123,10 +123,11 @@ class Controller:
         popLists.clear()
 
         reMem = self.remainingMemory()
-        while reMem > 0:
+        if reMem > 0:
             while len(self.wait_ids) > 0:
                 ind = self.addWorker(reMem)
                 if ind < 0:
+                    # print(f'Unable to accommodate more models for the time being...')
                     break
                 else:
                     idx = self.wait_ids.index(ind)
@@ -140,10 +141,6 @@ class Controller:
 
                     # Must pop it in time to avoid dead lock
                     self.wait_ids.pop(idx)
-            else:
-                # print(f'Unable to accommodate more models for the time being...')
-                pass
-            break
         
         return
 
