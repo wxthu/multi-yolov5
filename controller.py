@@ -55,7 +55,7 @@ class Controller:
                     price = self.prices[w]
                     selected_w_id = w
         
-        return addWorker
+        return selected_w_id
     
     def compare_p(self, i):
         return self.prices[i]
