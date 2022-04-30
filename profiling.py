@@ -14,7 +14,16 @@ def time_sync():
         torch.cuda.synchronize()
     return time.time()
 
+match_pair=dict()
+def to_cuda(tensor):
+    new=tensor.cuda()
+    match_pair[tensor]=tensor.data
+    return new
 
+def to_cpu(tensor):
+    if tensor in match_pair:
+        return match_pair[tensor]
+    return tensor.cpu()
 
 if __name__ == '__main__':
     yolov5x = DetectMultiBackend('yolov5x.pt', device=torch.device('cpu'))
@@ -49,16 +58,19 @@ if __name__ == '__main__':
     for name, model in models.items():
         for i in tqdm(range(NUM)):
             t1 = time_sync()
-            model.to('cuda')
+            # model.to('cuda')
+            model._apply(to_cuda)
             t2 = time_sync()
             y = model(rdm_input)
             t3 = time_sync()
-            model.to('cpu')
+            # model.to('cpu')
+            model._apply(to_cpu)
+            match_pair.clear()
+            torch.cuda.empty_cache()
             t4 = time_sync()
             loading[i] = 1000 * (t2 - t1)
             inference[i] = 1000 * (t3 - t2)
             unloading[i] = 1000 * (t4 - t3)
-            # torch.cuda.empty_cache()
             # print(f'single round: loading {loading[i]}ms, infer {inference[i]}ms, unloading {unloading[i]}ms')
 
         print(f'{name} loading avg {sum(loading) / NUM}ms, infer avg {sum(inference) / NUM}ms, unloading avg : {sum(unloading) / NUM}ms')

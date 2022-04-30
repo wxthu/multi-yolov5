@@ -16,7 +16,7 @@ def to_cuda(tensor):
 def to_cpu(tensor):
     if tensor in match_pair:
         return match_pair[tensor]
-    return tensor
+    return tensor.cpu()
 
 if __name__ == '__main__':
     yolov5x = DetectMultiBackend('yolov5x.pt', device=torch.device('cpu'))
@@ -41,17 +41,17 @@ if __name__ == '__main__':
     models.update({'yolov5s': yolov5s.eval()})
     
 
-    for name, model in models.items():
-        x = rdm_input.cuda()
-        model.to('cuda')
-        for i in tqdm(range(NUM)):
-            with torch.no_grad():
-                y = model(x)
-        print(f'{name} finished inference and to unload ...')   
-        time.sleep(5)
-        model.to('cpu')
-        torch.cuda.empty_cache()
-        time.sleep(5)
+    # for name, model in models.items():
+    #     x = rdm_input.cuda()
+    #     model.to('cuda')
+    #     for i in tqdm(range(NUM)):
+    #         with torch.no_grad():
+    #             y = model(x)
+    #     print(f'{name} finished inference and to unload ...')   
+    #     time.sleep(5)
+    #     model.to('cpu')
+    #     torch.cuda.empty_cache()
+    #     time.sleep(5)
 
     for name, model in models.items():
         x = rdm_input.cuda()
@@ -62,6 +62,7 @@ if __name__ == '__main__':
         print(f'{name} finished inference and to unload ...')   
         time.sleep(5)
         model._apply(to_cpu)
+        match_pair.clear()
         torch.cuda.empty_cache()
         time.sleep(5)
 
