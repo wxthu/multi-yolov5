@@ -6,10 +6,22 @@ from models.common import DetectMultiBackend
 import time
 from tqdm import tqdm
 
+
+match_pair=dict()
+def to_cuda(tensor):
+    new=tensor.cuda()
+    match_pair[tensor]=tensor.data
+    return new
+
+def to_cpu(tensor):
+    if tensor in match_pair:
+        return match_pair[tensor]
+    return tensor
+
 if __name__ == '__main__':
     yolov5x = DetectMultiBackend('yolov5x.pt', device=torch.device('cpu'))
     yolov5s = DetectMultiBackend('yolov5s.pt', device=torch.device('cpu'))
-    rdm_input = torch.randn(1, 3, 384, 640).to('cuda')
+    rdm_input = torch.randn(1, 3, 384, 640)
     NUM = 10
 
     models = {}
@@ -30,14 +42,28 @@ if __name__ == '__main__':
     
 
     for name, model in models.items():
+        x = rdm_input.cuda()
         model.to('cuda')
         for i in tqdm(range(NUM)):
             with torch.no_grad():
-                y = model(rdm_input)
+                y = model(x)
         print(f'{name} finished inference and to unload ...')   
         time.sleep(5)
         model.to('cpu')
         torch.cuda.empty_cache()
+        time.sleep(5)
+
+    for name, model in models.items():
+        x = rdm_input.cuda()
+        model._apply(to_cuda)
+        for i in tqdm(range(NUM)):
+            with torch.no_grad():
+                y = model(x)
+        print(f'{name} finished inference and to unload ...')   
+        time.sleep(5)
+        model._apply(to_cpu)
+        torch.cuda.empty_cache()
+        time.sleep(5)
 
 
     
