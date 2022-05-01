@@ -6,6 +6,9 @@ from models.common import DetectMultiBackend
 import time
 from tqdm import tqdm
 
+import pandas as pd
+import numpy as np
+
 def count_parameters(model):
     return sum(p.numel() for p in model.parameters() if p.requires_grad)
 
@@ -35,6 +38,10 @@ if __name__ == '__main__':
         y = warm(rdm_input)
     duration = time_sync() - t1
     print(f'*** warm up finished, duration : {1000 * duration / 2000}ms ***')
+    rdm_input = rdm_input.cpu()
+    warm.cpu()
+    torch.cuda.empty_cache()
+    
     NUM = 500
     loading = [0 for _ in range(NUM)]
     inference = [0 for _ in range(NUM)]
@@ -55,25 +62,45 @@ if __name__ == '__main__':
     models.update({'yolov5x': yolov5x.eval()})
     models.update({'yolov5s': yolov5s.eval()})
 
+    statis = []
     for name, model in models.items():
-        for i in tqdm(range(NUM)):
-            t1 = time_sync()
-            # model.to('cuda')
-            model._apply(to_cuda)
-            t2 = time_sync()
-            y = model(rdm_input)
-            t3 = time_sync()
-            # model.to('cpu')
-            model._apply(to_cpu)
-            match_pair.clear()
+        params = count_parameters(model)
+        for batch in range(1, 5):
+            rdm_input = torch.randn(batch, 3, 384, 640).to('cuda')
+            for i in tqdm(range(NUM)):
+                t1 = time_sync()
+                # model.to('cuda')
+                model._apply(to_cuda)
+                t2 = time_sync()
+                y = model(rdm_input)
+                t3 = time_sync()
+                # model.to('cpu')
+                model._apply(to_cpu)
+                match_pair.clear()
+                # torch.cuda.empty_cache()
+                t4 = time_sync()
+                loading[i] = 1000 * (t2 - t1)
+                inference[i] = 1000 * (t3 - t2)
+                unloading[i] = 1000 * (t4 - t3)
+                # print(f'single round: loading {loading[i]}ms, infer {inference[i]}ms, unloading {unloading[i]}ms')
+            rdm_input = rdm_input.cpu()
             torch.cuda.empty_cache()
-            t4 = time_sync()
-            loading[i] = 1000 * (t2 - t1)
-            inference[i] = 1000 * (t3 - t2)
-            unloading[i] = 1000 * (t4 - t3)
-            # print(f'single round: loading {loading[i]}ms, infer {inference[i]}ms, unloading {unloading[i]}ms')
-
-        print(f'{name} loading avg {sum(loading) / NUM}ms, infer avg {sum(inference) / NUM}ms, unloading avg : {sum(unloading) / NUM}ms')
+            
+            ldt = float('%.2f' % (sum(loading) / NUM))
+            ift = float('%.2f' % (sum(inference) / NUM))
+            uldt = float('%.2f' % (sum(unloading) / NUM))
+            sumt = float('%.2f' % (ldt + ift + uldt))
+            infer_pcent = float('%.2f' % (ift / sumt * 100))
+            statis.append([name, ldt, ift, uldt, sumt, infer_pcent, params, batch, 0, 0, 0])
+        
+            print(f'{name} loading avg {ldt}ms, infer avg {ift}ms, unloading avg : {uldt}ms')
+            time.sleep(120)
+            
+        
+    df = pd.DataFrame(np.asarray(statis),
+                    columns=('model', 'load(ms)', 'inference(ms)', 'unload(ms)', 'sum(ms)', 'infer percent(%)', 
+                             'params', 'batchsize', 'memory(MB)', 'model&data(MB)', 'gpu_utilization(%)'))
+    df.to_csv('profiling_results.csv', index=False, float_format='%.3f')
         
 
     
