@@ -9,11 +9,8 @@ import argparse
 import multiprocessing
 from multiprocessing import Process, Queue, Manager
 import os
-import sys
 import numpy as np
 import time
-
-import cv2
 import torch
 
 from torchvision.models.resnet import resnet18, resnet34, resnet50, resnet101, resnet152
@@ -28,15 +25,28 @@ class Detect:
         self.model = model[1].eval()
         self.name = model[0]
         self.device = 'cpu'
+        self.match_pair=dict()
+        
+    def to_cuda(self, param):
+        new=param.cuda()
+        self.match_pair[param]=param.data
+        return new
 
+    def to_cpu(self, param):
+        if param in self.match_pair:
+            return self.match_pair[param]
+        return param.cpu()
+    
     def load_model(self):
         self.device = 'cuda'
         os.environ["CUDA_VISIBLE_DEVICES"] = "0"
-        self.model.to(self.device)
-
+        self.model._apply(self.to_cuda)
+        # self.model.to(self.device)
+        
     def release_model(self):
         self.device = 'cpu'
-        self.model.to(self.device)
+        self.model._apply(self.to_cpu)
+        #self.model.to(self.device)
         torch.cuda.empty_cache()
 
     @torch.no_grad()
