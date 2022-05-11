@@ -28,6 +28,9 @@ def to_cpu(tensor):
         return match_pair[tensor]
     return tensor.cpu()
 
+def pin_memory(tensor):
+    return tensor.pin_memory()
+
 if __name__ == '__main__':
     yolov5x = DetectMultiBackend('yolov5x.pt', device=torch.device('cpu'))
     yolov5s = DetectMultiBackend('yolov5s.pt', device=torch.device('cpu'))
@@ -61,11 +64,14 @@ if __name__ == '__main__':
     models.update({'vgg16': vgg16().eval()})
     models.update({'yolov5x': yolov5x.eval()})
     models.update({'yolov5s': yolov5s.eval()})
+    
+    # for k, v in models.items():
+    #     models[k]._apply(pin_memory)
 
     statis = []
     for name, model in models.items():
         params = count_parameters(model)
-        for batch in range(1, 5):
+        for batch in range(1, 2):
             rdm_input = torch.randn(batch, 3, 384, 640).to('cuda')
             for i in tqdm(range(NUM)):
                 t1 = time_sync()
@@ -94,9 +100,9 @@ if __name__ == '__main__':
             statis.append([name, ldt, ift, uldt, sumt, infer_pcent, params, batch, 0, 0, 0])
         
             print(f'{name} loading avg {ldt}ms, infer avg {ift}ms, unloading avg : {uldt}ms')
+            print(f'***** sleep 120s to cold down *****')
             time.sleep(120)
             
-        
     df = pd.DataFrame(np.asarray(statis),
                     columns=('model', 'load(ms)', 'inference(ms)', 'unload(ms)', 'sum(ms)', 'infer percent(%)', 
                              'params', 'batchsize', 'memory(MB)', 'model&data(MB)', 'gpu_utilization(%)'))
