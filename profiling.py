@@ -20,12 +20,15 @@ def time_sync():
 match_pair=dict()
 def to_cuda(tensor):
     new=tensor.cuda()
+    match_pair[new]=tensor.data
     match_pair[tensor]=tensor.data
     return new
 
+# This function is suitable for all the models in torchvision, except yolov5s, yolov5x
 def to_cpu(tensor):
     if tensor in match_pair:
         return match_pair[tensor]
+    # assert False  
     return tensor.cpu()
 
 def pin_memory(tensor):
@@ -65,13 +68,13 @@ if __name__ == '__main__':
     models.update({'yolov5x': yolov5x.eval()})
     models.update({'yolov5s': yolov5s.eval()})
     
-    # for k, v in models.items():
-    #     models[k]._apply(pin_memory)
+    for k, v in models.items():
+        models[k]._apply(pin_memory)
 
     statis = []
     for name, model in models.items():
         params = count_parameters(model)
-        for batch in range(1, 2):
+        for batch in range(1, 5):
             rdm_input = torch.randn(batch, 3, 384, 640).to('cuda')
             for i in tqdm(range(NUM)):
                 t1 = time_sync()
